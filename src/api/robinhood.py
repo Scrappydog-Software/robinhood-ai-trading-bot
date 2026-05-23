@@ -1,5 +1,6 @@
 import robin_stocks.robinhood as rh
 import robin_stocks.urls as rh_urls
+from robin_stocks.robinhood.helper import request_post
 import time
 from datetime import datetime
 from pytz import timezone
@@ -235,6 +236,63 @@ def get_watchlist_stocks(name):
     if resp is None or 'results' not in resp:
         raise Exception(f"Error getting watchlist {name}: No response")
     return resp['results']
+
+
+# Create a new watchlist by name (uses undocumented Robinhood endpoint)
+def create_watchlist(name):
+    """Create a new watchlist by name. Uses undocumented Robinhood endpoint.
+
+    Returns dict: {'ok': bool, 'name': str, 'error': str|None}
+    """
+    try:
+        url = "https://api.robinhood.com/midlands/lists/default/"
+        payload = {"name": name, "type": "watchlist"}
+        # Note: robin_stocks's request_post takes payload as a dict; json=True for JSON body
+        resp = request_post(url, payload, json=True)
+        if resp and isinstance(resp, dict) and ('id' in resp or 'display_name' in resp):
+            return {'ok': True, 'name': name, 'error': None}
+        # If we got a dict with an 'error' or 'detail' key, surface it
+        if isinstance(resp, dict) and 'detail' in resp:
+            return {'ok': False, 'name': name, 'error': resp['detail']}
+        return {'ok': False, 'name': name, 'error': f'Unexpected response: {resp}'}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'error': str(e)}
+
+
+# Add a stock to an existing watchlist by name
+def add_stock_to_watchlist(name, symbol):
+    """Add a symbol to an existing watchlist by name.
+
+    Returns dict: {'ok': bool, 'name': str, 'symbol': str, 'error': str|None}
+    """
+    try:
+        resp = rh.account.post_symbols_to_watchlist(symbol.upper(), name=name)
+        # post_symbols_to_watchlist returns a list (one entry per symbol)
+        if resp and isinstance(resp, list) and len(resp) > 0:
+            # If any of the entries looks like an error, surface it
+            for entry in resp:
+                if isinstance(entry, dict) and ('detail' in entry or 'error' in entry):
+                    err = entry.get('detail') or entry.get('error') or 'Unknown error'
+                    return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(err)}
+            return {'ok': True, 'name': name, 'symbol': symbol.upper(), 'error': None}
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': f'No response (watchlist "{name}" may not exist)'}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(e)}
+
+
+# Remove a stock from a watchlist by name
+def remove_stock_from_watchlist(name, symbol):
+    """Remove a symbol from a watchlist by name.
+
+    Returns dict: {'ok': bool, 'name': str, 'symbol': str, 'error': str|None}
+    """
+    try:
+        resp = rh.account.delete_symbols_from_watchlist(symbol.upper(), name=name)
+        # delete_symbols_from_watchlist returns a list per symbol; entries are response objects or None
+        # robin_stocks returns the underlying requests.Response, and is fine if it's just non-error.
+        return {'ok': True, 'name': name, 'symbol': symbol.upper(), 'error': None}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(e)}
 
 
 # Get analyst ratings for a stock by symbol
