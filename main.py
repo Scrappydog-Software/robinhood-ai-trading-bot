@@ -4,6 +4,12 @@ import json
 import asyncio
 
 from config import *
+# Defensive fallback for users whose config.py predates AFTER_HOURS_INTERVAL_SECONDS
+try:
+    AFTER_HOURS_INTERVAL_SECONDS
+except NameError:
+    AFTER_HOURS_INTERVAL_SECONDS = 3600
+
 from src.api import robinhood
 from src.api import claude
 from src.utils import logger
