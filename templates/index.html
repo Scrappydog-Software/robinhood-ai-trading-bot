@@ -2,6 +2,40 @@
 
 {% block content %}
 
+<section class="card status-card">
+    <h2>Trading Loop Status</h2>
+    <dl class="kv">
+        <dt>Loop State</dt>
+        <dd>
+            {% if loop_status.loop_running %}
+                <span class="status-badge status-running">Running</span>
+            {% else %}
+                <span class="status-badge status-stopped">Stopped</span>
+            {% endif %}
+        </dd>
+        <dt>Market</dt>
+        <dd>
+            {% if loop_status.market_open is none %}
+                <span class="muted">Unknown</span>
+            {% elif loop_status.market_open %}
+                <span class="status-badge status-running">Open</span>
+            {% else %}
+                <span class="status-badge status-stopped">Closed</span>
+            {% endif %}
+        </dd>
+        <dt>Last Cycle</dt>
+        <dd>{% if loop_status.last_cycle_time %}{{ loop_status.last_cycle_time }}{% else %}<span class="muted">Never</span>{% endif %}</dd>
+        {% if loop_status.last_cycle_error %}
+        <dt>Last Error</dt>
+        <dd class="error">{{ loop_status.last_cycle_error }}</dd>
+        {% endif %}
+    </dl>
+    <div class="loop-controls">
+        <button id="btn-start-loop" class="btn btn-start" {% if loop_status.loop_running %}disabled{% endif %}>Start Loop</button>
+        <button id="btn-stop-loop" class="btn btn-danger" {% if not loop_status.loop_running %}disabled{% endif %}>Stop Loop</button>
+    </div>
+</section>
+
 <section class="card">
     <h2>Account</h2>
     {% if account.error %}
@@ -21,7 +55,7 @@
     {% if recommendations.error %}
         <p class="error">Error loading recommendations: {{ recommendations.error }}</p>
     {% elif not recommendations.available %}
-        <p class="muted">No recent recommendations. Start <code>python main.py</code> to populate this section.</p>
+        <p class="muted">No recent recommendations. Start the trading loop above or run <code>python app.py</code> to populate this section.</p>
     {% else %}
         <p class="muted small">
             Last cycle: {{ recommendations.timestamp }}
@@ -157,5 +191,39 @@
     </form>
     <p class="muted small">Note: creating watchlists uses an undocumented Robinhood endpoint. If it fails, create the watchlist in the Robinhood app and add its name to <code>WATCHLIST_NAMES</code> in <code>config.py</code>.</p>
 </section>
+
+<script>
+(function() {
+    var btnStart = document.getElementById('btn-start-loop');
+    var btnStop = document.getElementById('btn-stop-loop');
+
+    function updateButtons(running) {
+        btnStart.disabled = running;
+        btnStop.disabled = !running;
+    }
+
+    btnStart.addEventListener('click', function() {
+        btnStart.disabled = true;
+        fetch('/api/loop/start', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateButtons(data.loop_running);
+                location.reload();
+            })
+            .catch(function() { btnStart.disabled = false; });
+    });
+
+    btnStop.addEventListener('click', function() {
+        btnStop.disabled = true;
+        fetch('/api/loop/stop', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateButtons(data.loop_running);
+                location.reload();
+            })
+            .catch(function() { btnStop.disabled = false; });
+    });
+})();
+</script>
 
 {% endblock %}

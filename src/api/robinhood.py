@@ -358,9 +358,11 @@ def sell_stock(symbol, quantity):
         return {"id": "market_closed"}
 
     if MODE == "manual":
-        confirm = input(f"Confirm sell for {symbol} of {quantity}? (yes/no): ")
-        if confirm.lower() != "yes":
-            return {"id": "cancelled"}
+        # Manual confirmation via input() is incompatible with the background
+        # trading loop. In the unified app, manual mode logs the trade intent
+        # but does not execute. Use the web UI or switch to "auto" mode.
+        logger.info(f"Manual mode: would sell {quantity} of {symbol} — skipping (no interactive prompt in unified app)")
+        return {"id": "cancelled"}
 
     sell_resp = rh_run_with_retries(rh.orders.order_sell_market, symbol, quantity, timeInForce="gfd")
     if sell_resp is None:
@@ -377,9 +379,11 @@ def buy_stock(symbol, quantity):
         return {"id": "market_closed"}
 
     if MODE == "manual":
-        confirm = input(f"Confirm buy for {symbol} of {quantity}? (yes/no): ")
-        if confirm.lower() != "yes":
-            return {"id": "cancelled"}
+        # Manual confirmation via input() is incompatible with the background
+        # trading loop. In the unified app, manual mode logs the trade intent
+        # but does not execute. Use the web UI or switch to "auto" mode.
+        logger.info(f"Manual mode: would buy {quantity} of {symbol} — skipping (no interactive prompt in unified app)")
+        return {"id": "cancelled"}
 
     buy_resp = rh_run_with_retries(rh.orders.order_buy_market, symbol, quantity, timeInForce="gfd")
     if buy_resp is None:
