@@ -1,11 +1,20 @@
 import time
-from datetime import datetime
+import warnings
+from datetime import datetime, timezone
 import json
+import os
 import asyncio
 
 from config import *
+# Defensive fallback for users whose config.py predates AFTER_HOURS_INTERVAL_SECONDS
+try:
+    AFTER_HOURS_INTERVAL_SECONDS
+except NameError:
+    AFTER_HOURS_INTERVAL_SECONDS = 3600
+
 from src.api import robinhood
-from src.api import openai
+from src.api import claude
+from src.state import trading_state
 from src.utils import logger
 
 
@@ -58,21 +67,22 @@ def make_ai_decisions(account_info, portfolio_overview, watchlist_overview):
         "Return your decisions in a JSON array with this structure:\n"
         "```json\n"
         "[\n"
-        '  {"symbol": <symbol>, "decision": <decision>, "quantity": <quantity>},\n'
+        '  {"symbol": <symbol>, "decision": <decision>, "quantity": <quantity>, "rationale": <rationale>},\n'
         "  ...\n"
         "]\n"
         "```\n"
         "- <symbol>: Stock symbol.\n"
         "- <decision>: One of `buy`, `sell`, or `hold`.\n"
-        "- <quantity>: Recommended transaction quantity.\n\n"
+        "- <quantity>: Recommended transaction quantity.\n"
+        "- <rationale>: A brief explanation of WHY this decision was made, referencing specific data points (e.g. RSI, VWAP, moving averages, analyst ratings) that influenced the decision.\n\n"
         "**Instructions:**\n"
         "- Provide only the JSON output with no additional text.\n"
         "- Return an empty array if no actions are necessary."
     )
     logger.debug(f"AI making-decisions prompt:{chr(10)}{ai_prompt}")
-    ai_response = openai.make_ai_request(ai_prompt)
-    logger.debug(f"AI making-decisions response:{chr(10)}{ai_response.choices[0].message.content.strip()}")
-    decisions = openai.parse_ai_response(ai_response)
+    ai_response = claude.make_ai_request(ai_prompt)
+    logger.debug(f"AI making-decisions response:{chr(10)}{ai_response.strip()}")
+    decisions = claude.parse_ai_response(ai_response)
     return decisions
 
 
@@ -122,6 +132,54 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
     return filtered_decisions
 
 
+# Persist the latest filtered AI decisions to disk for the web UI to consume.
+#
+# Contract (see also webui._build_recommendations_view):
+#   - File:        data/last-decisions.json
+#   - Atomicity:   write to .tmp first, then os.replace -> the webui never sees
+#                  a half-written file (os.replace is atomic on POSIX + Windows
+#                  when source/dest are on the same filesystem, which they are
+#                  here because both live under ./data/).
+#   - Shape:       {timestamp: ISO8601-Z, market_open: bool, decisions: [...]}
+#   - Decisions:   the FULL filtered list including 'hold' entries. Holds are
+#                  filtered out at READ time by the webui — keeping holds on disk
+#                  lets other consumers (debugging, future analytics) see them.
+#   - Errors:      any IO failure is logged and swallowed. A failed write must
+#                  not kill the trading loop.
+def write_last_decisions(decisions_data, market_open):
+    # Update in-process shared state so the web UI gets live data
+    # without a disk round-trip.
+    normalized = [
+        {
+            'symbol': d.get('symbol'),
+            'decision': d.get('decision'),
+            'quantity': d.get('quantity', 0),
+            'rationale': d.get('rationale', ''),
+        }
+        for d in (decisions_data or [])
+    ]
+    trading_state.update(
+        decisions=normalized,
+        market_open=bool(market_open),
+    )
+
+    # Also write to disk as a side-effect for debugging / external tools.
+    try:
+        os.makedirs('data', exist_ok=True)
+        payload = {
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'market_open': bool(market_open),
+            'decisions': normalized,
+        }
+        final_path = os.path.join('data', 'last-decisions.json')
+        tmp_path = final_path + '.tmp'
+        with open(tmp_path, 'w') as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, final_path)
+    except Exception as e:
+        logger.error(f"Error writing last-decisions.json: {e}")
+
+
 # Limit watchlist stocks based on the current week number
 def limit_watchlist_stocks(watchlist_stocks, limit):
     if len(watchlist_stocks) <= limit:
@@ -145,7 +203,13 @@ def limit_watchlist_stocks(watchlist_stocks, limit):
 
 
 # Main trading bot function
-def trading_bot():
+def trading_bot(market_open=None):
+    # market_open is passed in from main() to avoid a second is_market_open()
+    # round-trip per cycle. None signals "caller didn't tell us" — we fall back
+    # to a fresh check so trading_bot() stays callable on its own (tests, ad-hoc).
+    if market_open is None:
+        market_open = robinhood.is_market_open()
+
     logger.info("Getting account info...")
     account_info = robinhood.get_account_info()
 
@@ -209,6 +273,9 @@ def trading_bot():
 
     if len(portfolio_overview) == 0 and len(watchlist_overview) == 0:
         logger.warning("No stocks to analyze, skipping AI-based decision-making...")
+        # Still persist an empty decisions snapshot so the dashboard reflects
+        # the most recent cycle rather than showing data from an earlier run.
+        write_last_decisions([], market_open)
         return {}
 
     decisions_data = []
@@ -222,6 +289,12 @@ def trading_bot():
 
     logger.info("Filtering AI hallucinations...")
     decisions_data = filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overview, decisions_data)
+
+    # Persist the FULL filtered list (incl. holds) for the web UI dashboard.
+    # We do this even when there are no actionable trades, so the dashboard
+    # reflects "the bot ran a cycle and found nothing to do" rather than
+    # showing stale recommendations from a previous cycle.
+    write_last_decisions(decisions_data, market_open)
 
     if len(decisions_data) == 0:
         logger.info("No decisions to execute")
@@ -242,6 +315,9 @@ def trading_bot():
                     if sell_resp['id'] == "demo":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "success", "details": "Demo mode"}
                         logger.info(f"{symbol} > Demo > Sold {quantity} stocks")
+                    elif sell_resp['id'] == "market_closed":
+                        trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "market_closed", "details": "Market closed; analysis-only mode"}
+                        logger.info(f"{symbol} > Market closed > Would have sold {quantity} stocks")
                     elif sell_resp['id'] == "cancelled":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "cancelled", "details": "Cancelled by user"}
                         logger.info(f"{symbol} > Sell cancelled by user")
@@ -264,6 +340,9 @@ def trading_bot():
                     if buy_resp['id'] == "demo":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "success", "details": "Demo mode"}
                         logger.info(f"{symbol} > Demo > Bought {quantity} stocks")
+                    elif buy_resp['id'] == "market_closed":
+                        trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "market_closed", "details": "Market closed; analysis-only mode"}
+                        logger.info(f"{symbol} > Market closed > Would have bought {quantity} stocks")
                     elif buy_resp['id'] == "cancelled":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "cancelled", "details": "Cancelled by user"}
                         logger.info(f"{symbol} > Buy cancelled by user")
@@ -297,21 +376,28 @@ async def main():
                 robinhood_token_expiry = time.time() + login_resp['expires_in']
                 logger.info(f"Successfully logged in. Token expires in {login_resp['expires_in']} seconds")
 
-            if robinhood.is_market_open():
+            market_open = robinhood.is_market_open()
+            if market_open:
                 run_interval_seconds = RUN_INTERVAL_SECONDS
                 logger.info(f"Market is open, running trading bot in {MODE} mode...")
-
-                trading_results = trading_bot()
-
-                sold_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "success"]
-                bought_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "success"]
-                errors = [f"{result['symbol']} ({result['details']})" for result in trading_results.values() if result['result'] == "error"]
-                logger.info(f"Sold: {'None' if len(sold_stocks) == 0 else ', '.join(sold_stocks)}")
-                logger.info(f"Bought: {'None' if len(bought_stocks) == 0 else ', '.join(bought_stocks)}")
-                logger.info(f"Errors: {'None' if len(errors) == 0 else ', '.join(errors)}")
             else:
-                run_interval_seconds = 60
-                logger.info("Market is closed, waiting for next run...")
+                run_interval_seconds = AFTER_HOURS_INTERVAL_SECONDS
+                logger.info(f"Market is closed, running analysis only (no order placement) in {MODE} mode...")
+
+            trading_results = trading_bot(market_open=market_open)
+
+            sold_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "success"]
+            bought_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "success"]
+            would_have_sold = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "market_closed"]
+            would_have_bought = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "market_closed"]
+            errors = [f"{result['symbol']} ({result['details']})" for result in trading_results.values() if result['result'] == "error"]
+            logger.info(f"Sold: {'None' if len(sold_stocks) == 0 else ', '.join(sold_stocks)}")
+            logger.info(f"Bought: {'None' if len(bought_stocks) == 0 else ', '.join(bought_stocks)}")
+            if would_have_sold:
+                logger.info(f"Would have sold (market closed): {', '.join(would_have_sold)}")
+            if would_have_bought:
+                logger.info(f"Would have bought (market closed): {', '.join(would_have_bought)}")
+            logger.info(f"Errors: {'None' if len(errors) == 0 else ', '.join(errors)}")
         except Exception as e:
             run_interval_seconds = 60
             logger.error(f"Trading bot error: {e}")
@@ -320,8 +406,15 @@ async def main():
         time.sleep(run_interval_seconds)
 
 
-# Run the main function
+# Run the main function (deprecated — use ``python app.py`` instead)
 if __name__ == '__main__':
+    warnings.warn(
+        "Running main.py directly is deprecated. Use 'python app.py' for the "
+        "unified application (Flask web UI + trading loop). main.py will "
+        "continue to work but may be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     confirm = input(f"Are you sure you want to run the bot in {MODE} mode? (yes/no): ")
     if confirm.lower() != "yes":
         logger.warning("Exiting the bot...")

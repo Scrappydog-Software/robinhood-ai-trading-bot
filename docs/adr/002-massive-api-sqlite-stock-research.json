@@ -1,0 +1,126 @@
+{
+  "adr": {
+    "id": "ADR-002",
+    "title": "Massive API Integration, SQLite Database, and Stock Research Page",
+    "status": "Proposed",
+    "date": "2026-05-23",
+    "deciders": ["Eric Bowen"]
+  },
+  "decisions": {
+    "massive_client": {
+      "module": "src/api/massive_client.py",
+      "pattern": "Singleton RESTClient, lazy init, defensive NameError fallback for MASSIVE_API_KEY",
+      "naming_rationale": "massive_client.py avoids shadowing the massive pip package",
+      "functions": ["get_client()", "fetch_all_tickers()", "fetch_ticker_details(ticker_symbol)"]
+    },
+    "database": {
+      "engine": "sqlite3 (stdlib)",
+      "orm": "none (raw sqlite3 with thin wrapper)",
+      "file_location": "data/market.db",
+      "wrapper_module": "src/db.py",
+      "journal_mode": "WAL",
+      "thread_safety": "threading.Lock on writes, check_same_thread=False"
+    },
+    "schema": {
+      "table": "tickers",
+      "primary_key": "ticker (TEXT)",
+      "columns": [
+        "ticker TEXT PRIMARY KEY",
+        "name TEXT",
+        "market TEXT",
+        "locale TEXT",
+        "type TEXT",
+        "active INTEGER (boolean 1/0)",
+        "currency_name TEXT",
+        "currency_symbol TEXT",
+        "base_currency_symbol TEXT",
+        "base_currency_name TEXT",
+        "cik TEXT",
+        "composite_figi TEXT",
+        "share_class_figi TEXT",
+        "primary_exchange TEXT",
+        "last_updated_utc TEXT",
+        "delisted_utc TEXT",
+        "source_feed TEXT",
+        "loaded_at TEXT (auto-populated)"
+      ],
+      "indexes": ["idx_tickers_name (name)", "idx_tickers_market (market)", "idx_tickers_type (type)", "idx_tickers_active (active)"],
+      "normalization": "flat (no lookup tables)",
+      "rationale": "Data volume (~15-50k rows) does not justify normalization overhead"
+    },
+    "ticker_load": {
+      "primary": "POST /api/tickers/load (Flask route, CSRF-exempt)",
+      "fallback": "scripts/load_tickers.py (CLI)",
+      "strategy": "INSERT OR REPLACE (full reload, idempotent)",
+      "automatic": false,
+      "estimated_duration": "10-30 seconds"
+    },
+    "stock_research_page": {
+      "route": "GET /research",
+      "template": "templates/research.html",
+      "features": ["text search (ticker + name)", "market filter", "type filter", "active-only toggle", "pagination (50/page)", "load/refresh button", "ticker count display"],
+      "detail_view": "deferred to Phase 2",
+      "navigation": "Link added to base.html header"
+    },
+    "dependency": {
+      "package": "massive",
+      "version_constraint": ">=1.0.0",
+      "config_key": "MASSIVE_API_KEY",
+      "config_fallback": "empty string via try/except NameError"
+    },
+    "db_init": {
+      "call_site": "app.py main() before Flask server start",
+      "idempotent": true
+    }
+  },
+  "files_changed": {
+    "new": [
+      "src/api/massive_client.py",
+      "src/db.py",
+      "scripts/load_tickers.py",
+      "templates/research.html",
+      "docs/adr/002-massive-api-sqlite-stock-research.md"
+    ],
+    "modified": [
+      "requirements.txt",
+      "config.py.example",
+      "webui.py",
+      "templates/base.html",
+      "static/style.css",
+      "app.py",
+      ".superbot/context.md"
+    ]
+  },
+  "phase_2": {
+    "planned": [
+      "ticker_details table with on-demand caching",
+      "Ticker detail page (/research/<ticker>)",
+      "Cross-reference portfolio/watchlist with Massive data",
+      "Historical price data storage"
+    ]
+  },
+  "memory": {
+    "key_decisions": [
+      "SQLite via stdlib sqlite3, no ORM — revisit at 3+ tables",
+      "Database at data/market.db (gitignored)",
+      "massive_client.py naming avoids package shadow",
+      "Ticker load is explicit (button/script), not automatic at startup",
+      "Flat schema — no normalization for ~50k rows",
+      "WAL mode + threading.Lock for write safety",
+      "No ticker detail view in Phase 1",
+      "Standard form submission, no HTMX/JS frameworks"
+    ],
+    "patterns_preserved": [
+      "from config import * with try/except NameError fallback",
+      "API clients under src/api/",
+      "Dark theme Jinja2 templates extending base.html",
+      "CSRF-exempt for JSON API endpoints",
+      "Module-level singleton clients"
+    ],
+    "risks_noted": [
+      "Massive API rate limits during bulk ticker load",
+      "Schema evolution without migration framework",
+      "SQLite single-writer contention (mitigated by WAL + infrequent writes)"
+    ]
+  }
+}

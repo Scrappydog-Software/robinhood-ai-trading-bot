@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card status-card">
+    <h2>Trading Loop Status</h2>
+    <dl class="kv">
+        <dt>Loop State</dt>
+        <dd>
+            {% if loop_status.loop_running %}
+                <span class="status-badge status-running">Running</span>
+            {% else %}
+                <span class="status-badge status-stopped">Stopped</span>
+            {% endif %}
+        </dd>
+        <dt>Market</dt>
+        <dd>
+            {% if loop_status.market_open is none %}
+                <span class="muted">Unknown</span>
+            {% elif loop_status.market_open %}
+                <span class="status-badge status-running">Open</span>
+            {% else %}
+                <span class="status-badge status-stopped">Closed</span>
+            {% endif %}
+        </dd>
+        <dt>Last Cycle</dt>
+        <dd>{% if loop_status.last_cycle_time %}{{ loop_status.last_cycle_time }}{% else %}<span class="muted">Never</span>{% endif %}</dd>
+        {% if loop_status.last_cycle_error %}
+        <dt>Last Error</dt>
+        <dd class="error">{{ loop_status.last_cycle_error }}</dd>
+        {% endif %}
+    </dl>
+    <div class="loop-controls">
+        <button id="btn-start-loop" class="btn btn-start" {% if loop_status.loop_running %}disabled{% endif %}>Start Loop</button>
+        <button id="btn-stop-loop" class="btn btn-danger" {% if not loop_status.loop_running %}disabled{% endif %}>Stop Loop</button>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Account</h2>
+    {% if account.error %}
+        <p class="error">Error loading account: {{ account.error }}</p>
+    {% else %}
+        <dl class="kv">
+            <dt>Buying Power</dt>
+            <dd>{% if account.buying_power is not none %}${{ account.buying_power }}{% else %}&mdash;{% endif %}</dd>
+            <dt>Portfolio Value (positions)</dt>
+            <dd>${{ portfolio_total }}</dd>
+        </dl>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Recommendations</h2>
+    {% if recommendations.error %}
+        <p class="error">Error loading recommendations: {{ recommendations.error }}</p>
+    {% elif not recommendations.available %}
+        <p class="muted">No recent recommendations. Start the trading loop above or run <code>python app.py</code> to populate this section.</p>
+    {% else %}
+        <p class="muted small">
+            Last cycle: {{ recommendations.timestamp }}
+            ({% if recommendations.market_open_at_cycle %}market open{% else %}after hours{% endif %})
+            {% if recommendations.stale %}
+                <span class="stale-badge">stale</span>
+            {% else %}
+                <span class="fresh-badge">fresh</span>
+            {% endif %}
+        </p>
+        {% if recommendations.rows|length == 0 %}
+            <p class="muted">No buy or sell signals this cycle. ({{ recommendations.hold_count }} hold decision{{ '' if recommendations.hold_count == 1 else 's' }} filtered out.)</p>
+        {% else %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Decision</th>
+                        <th>Quantity</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in recommendations.rows %}
+                        <tr class="{{ row.decision }}" data-symbol="{{ row.symbol }}">
+                            <td><strong>{{ row.symbol }}</strong></td>
+                            <td>{{ row.decision }}</td>
+                            <td>{{ "%.6f"|format(row.quantity) }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Portfolio</h2>
+    {% if portfolio_error %}
+        <p class="error">Error loading portfolio: {{ portfolio_error }}</p>
+    {% elif portfolio_rows|length == 0 %}
+        <p class="muted">No holdings.</p>
+    {% else %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Quantity</th>
+                    <th>Current Price</th>
+                    <th>Avg Buy Price</th>
+                    <th>Position Value</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in portfolio_rows %}
+                    <tr data-symbol="{{ row.symbol }}">
+                        <td><strong>{{ row.symbol }}</strong></td>
+                        <td>{{ row.quantity }}</td>
+                        <td>${{ row.current_price }}</td>
+                        <td>${{ row.avg_buy_price }}</td>
+                        <td>${{ row.position_value }}</td>
+                        <td class="rec rec-{{ (row.recommendation or 'none')|lower }}">{% if row.recommendation %}{{ row.recommendation }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Watchlists</h2>
+    {% if watchlists|length == 0 %}
+        <p class="muted">No watchlists configured. Create one below.</p>
+    {% endif %}
+
+    {% for wl in watchlists %}
+        <div class="watchlist">
+            <h3>{{ wl.name }} <span class="muted">({{ wl.symbols|length }} symbol{{ '' if wl.symbols|length == 1 else 's' }})</span></h3>
+
+            {% if wl.error %}
+                <p class="error">Error loading: {{ wl.error }}</p>
+            {% endif %}
+
+            {% if wl.symbols|length > 0 %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Recommendation</th>
+                            <th class="actions-col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for symbol in wl.symbols %}
+                            {% set rec = decisions_map.get(symbol) %}
+                            <tr data-symbol="{{ symbol }}">
+                                <td><strong>{{ symbol }}</strong></td>
+                                <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
+                                <td class="actions-col">
+                                    <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="symbol" value="{{ symbol }}">
+                                        <button type="submit" class="btn btn-danger">Remove</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('add_to_watchlist', name=wl.name) }}" class="inline-form add-symbol-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label>
+                    Add symbol:
+                    <input type="text" name="symbol" placeholder="e.g. AAPL" maxlength="10" required>
+                </label>
+                <button type="submit" class="btn">Add</button>
+            </form>
+        </div>
+    {% endfor %}
+</section>
+
+<section class="card">
+    <h2>Create New Watchlist</h2>
+    <form method="post" action="{{ url_for('create_watchlist') }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>
+            Name:
+            <input type="text" name="name" placeholder="e.g. My New List" maxlength="80" required>
+        </label>
+        <button type="submit" class="btn">Create</button>
+    </form>
+    <p class="muted small">Note: creating watchlists uses an undocumented Robinhood endpoint. If it fails, create the watchlist in the Robinhood app and add its name to <code>WATCHLIST_NAMES</code> in <code>config.py</code>.</p>
+</section>
+
+<script>
+(function() {
+    var btnStart = document.getElementById('btn-start-loop');
+    var btnStop = document.getElementById('btn-stop-loop');
+
+    function updateButtons(running) {
+        btnStart.disabled = running;
+        btnStop.disabled = !running;
+    }
+
+    btnStart.addEventListener('click', function() {
+        btnStart.disabled = true;
+        fetch('/api/loop/start', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateButtons(data.loop_running);
+                location.reload();
+            })
+            .catch(function() { btnStart.disabled = false; });
+    });
+
+    btnStop.addEventListener('click', function() {
+        btnStop.disabled = true;
+        fetch('/api/loop/stop', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateButtons(data.loop_running);
+                location.reload();
+            })
+            .catch(function() { btnStop.disabled = false; });
+    });
+})();
+</script>
+
+{% endblock %}

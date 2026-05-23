@@ -4,7 +4,7 @@
 
 ## ⚡ Overview
 The **Robinhood AI Trading Bot** is a simple Python script
-that combines **OpenAI's intelligence** with **Robinhood's trading capabilities**
+that combines **Anthropic Claude's intelligence** with **Robinhood's trading capabilities**
 to help automate and optimize stock trading decisions.
 By analyzing **Relative Strength Index (RSI)**, **Volume-Weighted Average Price (VWAP)**,
 **Moving Averages**, and **Robinhood analyst ratings**, the bot generates buy, sell,
@@ -29,7 +29,7 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 ✅ **Workday Scheduling** – Align trading activity with market hours.
 
 ## 🚀 Getting Started
-1. **Connect Your Accounts**: Add your OpenAI API Key and Robinhood credentials.
+1. **Connect Your Accounts**: Add your Anthropic API Key and Robinhood credentials.
 2. **Choose a Mode**:
    - **Demo Mode**: Simulates trades without execution.
    - **Manual Mode**: Requires confirmation before executing trades.
@@ -37,14 +37,14 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 3. **Monitor and Adjust**: Review trade logs and fine-tune settings for optimal performance.
 
 ## 📊 How It Works
-1. **Authenticate**: Logs into OpenAI and Robinhood.
+1. **Authenticate**: Logs into Anthropic and Robinhood.
 2. **Fetch Data**: Retrieves stocks from your **portfolio** and **watchlist**.
 3. **Analyze Market Conditions**:
    - **RSI**: Determines overbought/oversold conditions.
    - **VWAP**: Identifies undervalued/overvalued stocks.
    - **Moving Averages**: Evaluates price trends (50-day and 200-day).
    - **Analyst Ratings**: Incorporates Robinhood's expert opinions.
-4. **AI-Driven Decisions**: Uses OpenAI to generate trading recommendations.
+4. **AI-Driven Decisions**: Uses Anthropic Claude to generate trading recommendations.
 5. **Trade Execution**: Buys, sells, or holds stocks based on AI insights.
 6. **Continuous Monitoring**: Repeats analysis and trades as the market evolves.
 
@@ -69,7 +69,7 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 - Provides sentiment analysis based on expert insights.
 
 ## 🤖 AI-Powered Decision Making
-The bot formulates decisions using OpenAI based on:
+The bot formulates decisions using Anthropic Claude based on:
 - RSI, VWAP, moving averages, and analyst ratings.
 - User-defined constraints (e.g., budget, stock exclusions, portfolio size).
 - Pattern Day Trading (PDT) status to prevent PDT designation.
@@ -227,14 +227,8 @@ Copy the example config and update it with your details::
 
 Fill in config.py with the required parameters:
 ```python
-# 1Password Credentials
-OP_SERVICE_ACCOUNT_NAME = "..."             # 1Password service account name (for Robinhood MFA secret)
-OP_SERVICE_ACCOUNT_TOKEN = "..."            # 1Password service account token (for Robinhood MFA secret)
-OP_VAULT_NAME = "..."                       # 1Password vault name (for Robinhood MFA secret)
-OP_ITEM_NAME = "..."                        # 1Password item name (for Robinhood MFA secret)
-
 # Credentials
-OPENAI_API_KEY = "..."                      # OpenAI API key
+ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console.anthropic.com/)
 ROBINHOOD_USERNAME = "..."                  # Robinhood username
 ROBINHOOD_PASSWORD = "..."                  # Robinhood password
 ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
@@ -243,6 +237,7 @@ ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
 MODE = "demo"                               # Trading mode (demo, auto, manual)
 LOG_LEVEL = "INFO"                          # Log level (DEBUG, INFO)
 RUN_INTERVAL_SECONDS = 600                  # Trading interval in seconds (if the market is open)
+AFTER_HOURS_INTERVAL_SECONDS = 3600         # Analysis interval when market is closed (analysis runs 24/7; orders only during market hours)
 
 # Robinhood config parameters
 TRADE_EXCEPTIONS = []                       # List of stocks to exclude from trading (e.g. ["AAPL", "TSLA", "AMZN"])
@@ -254,15 +249,13 @@ MAX_SELLING_AMOUNT_USD = 10.0               # Maximum sell amount in USD (False 
 MIN_BUYING_AMOUNT_USD = 1.0                 # Minimum buy amount in USD (False - disable setting)
 MAX_BUYING_AMOUNT_USD = 10.0                # Maximum buy amount in USD (False - disable setting)
 
-# OpenAI config params
-OPENAI_MODEL_NAME = "gpt-4o-mini"           # OpenAI model name
+# Anthropic (Claude) config params
+ANTHROPIC_MODEL_NAME = "claude-sonnet-4-5"  # Anthropic model name (e.g. claude-sonnet-4-5)
 ```
 
 #### Robinhood MFA Setup
-If MFA is enabled, you'll need to provide an MFA code. There are two options:
+If MFA is enabled, you'll need to provide an MFA code via `ROBINHOOD_MFA_SECRET`:
 
-##### Option 1: Use `ROBINHOOD_MFA_SECRET` (Local MFA Code)
-If you prefer to set the MFA secret directly, follow these steps:
 1. Log in to your Robinhood account on your phone. Important to use your phone because it will display the secret key but not the QR code.
 2. Navigate to the security settings.
 3. Enable MFA if it is not already enabled. When setting up MFA, you will be asked to select an authentication method on your phone. Choose "Authenticator app" and Robinhood will provide you with a secret key. This is your `ROBINHOOD_MFA_SECRET`.
@@ -270,28 +263,22 @@ If you prefer to set the MFA secret directly, follow these steps:
 5. Enter the same secret key into your authentication app on the same PC where you run the script (e.g., Google Authenticator). Note: If you enter the secret on a different device, it will generate a different value.
 6. After entering the same secret on the same PC, use the generated TOTP number to authenticate with the Robinhood app.
 
-##### Option 2: Use 1Password (Auto MFA Retrieval)
-If you do not set the `ROBINHOOD_MFA_SECRET` environment variable, the script will attempt to retrieve the MFA secret from 1Password using the following credentials:
-```python
-# 1Password Credentials
-OP_SERVICE_ACCOUNT_NAME = "..."             # 1Password service account name (for Robinhood MFA secret)
-OP_SERVICE_ACCOUNT_TOKEN = "..."            # 1Password service account token (for Robinhood MFA secret)
-OP_VAULT_NAME = "..."                       # 1Password vault name (for Robinhood MFA secret)
-OP_ITEM_NAME = "..."                        # 1Password item name (for Robinhood MFA secret)
-```
-
-To use this feature:
-1. Ensure the above 1Password credentials are correctly configured in your environment or `config.py` file.
-2. Store your Robinhood MFA secret in the specified 1Password vault and item.
-3. The script will automatically fetch the MFA secret from 1Password if `ROBINHOOD_MFA_SECRET` is not provided.
-
-For more information on setting up 1Password Service Accounts, read the guide: [Get started with 1Password Service Accounts](https://developer.1password.com/docs/service-accounts/get-started/)
-
 ### Running the Bot
 Start the bot with:
    ```sh
    python main.py
    ```
+
+## Local Web UI
+
+The bot ships with an optional Flask-based web UI for managing watchlists and viewing portfolio state.
+
+- Start: `python webui.py`
+- URL: http://127.0.0.1:5001 (configurable via `WEBUI_PORT` in `config.py`)
+- **Local only:** binds to 127.0.0.1 by design. Do NOT change the bind to 0.0.0.0 or any external address — this app has no authentication and would expose your Robinhood credentials to anyone on the network.
+- **Port choice:** default is 5001, not Flask's traditional 5000. On macOS, AirPlay Receiver (Control Center) listens on `*:5000` and returns HTTP 403 to browser requests — even though `127.0.0.1:5000` looks free to `curl` over IPv4, browsers prefer IPv6 (`[::1]:5000`) and hit AirPlay first.
+- Authentication: uses the same `config.py` Robinhood credentials as the bot. The first launch may trigger a Robinhood device-verification push; subsequent launches reuse the pickled session.
+- **Creating watchlists** relies on an undocumented Robinhood API endpoint. If the endpoint has changed since this code was written, the UI will surface a clear error and you can fall back to creating the watchlist in the Robinhood mobile app.
 
 ## ⚠️ Disclaimer
 Please note: This bot is designed solely for educational purposes.

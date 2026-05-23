@@ -1,0 +1,302 @@
+:root {
+    --bg: #0f1115;
+    --bg-elev: #181b22;
+    --border: #2a2f3a;
+    --text: #e6e8eb;
+    --text-muted: #8b94a3;
+    --accent: #4a9eff;
+    --danger: #e06c75;
+    --success: #87d96c;
+    --warning: #e5c07b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+}
+
+header {
+    background: var(--bg-elev);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+}
+
+header h1 { margin: 0; font-size: 20px; }
+.subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
+.subtitle code { background: var(--bg); padding: 1px 6px; border-radius: 3px; }
+
+.header-row { display: flex; justify-content: space-between; align-items: center; }
+.main-nav { display: flex; gap: 16px; }
+.main-nav a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.main-nav a:hover { color: var(--text); background: rgba(74, 158, 255, 0.08); }
+
+main { max-width: 960px; margin: 24px auto; padding: 0 24px; }
+footer { text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; }
+
+.card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.card h2 { margin: 0 0 12px; font-size: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.card h3 { margin: 16px 0 8px; font-size: 14px; }
+
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+dl.kv dt { color: var(--text-muted); }
+dl.kv dd { margin: 0; font-weight: 600; }
+
+table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+tbody tr:hover { background: rgba(74, 158, 255, 0.04); }
+.actions-col { text-align: right; width: 1%; white-space: nowrap; }
+
+.watchlist { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.watchlist:last-child { border-bottom: none; }
+
+.inline-form { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.add-symbol-form { margin-top: 8px; }
+
+input[type="text"] {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-family: inherit;
+}
+input[type="text"]:focus { outline: none; border-color: var(--accent); }
+
+.btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.btn:hover { filter: brightness(1.15); }
+.btn-danger { background: var(--danger); }
+
+.flash-messages { list-style: none; padding: 0; margin: 16px auto; max-width: 960px; padding: 0 24px; }
+.flash { padding: 10px 14px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; border: 1px solid; }
+.flash-success { background: rgba(135, 217, 108, 0.1); border-color: var(--success); color: var(--success); }
+.flash-error { background: rgba(224, 108, 117, 0.1); border-color: var(--danger); color: var(--danger); }
+.flash-warning { background: rgba(229, 192, 123, 0.1); border-color: var(--warning); color: var(--warning); }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 12px; }
+.error { color: var(--danger); }
+
+/* Recommendations section — color the Decision cell (2nd column) and add a
+   subtle left accent on the row so buy/sell distinctions are visible at a
+   glance without being garish on the dark theme. */
+tr.buy td:nth-child(2) {
+    color: var(--success);
+    border-left: 2px solid var(--success);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+tr.sell td:nth-child(2) {
+    color: var(--danger);
+    border-left: 2px solid var(--danger);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+/* Recommendation cells in Portfolio & Watchlist tables — reuse the same
+   typographic treatment as the Recommendations section's decision column. */
+.rec {
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+.rec-buy  { color: var(--success); }
+.rec-sell { color: var(--danger); }
+.rec-hold { color: var(--text-muted); }
+.rec-none { color: var(--text-muted); font-weight: 400; }
+
+/* Trading loop status card */
+.status-card .kv { margin-bottom: 12px; }
+
+.status-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.status-running {
+    background: rgba(135, 217, 108, 0.15);
+    color: var(--success);
+}
+.status-stopped {
+    background: rgba(224, 108, 117, 0.1);
+    color: var(--danger);
+}
+
+.loop-controls {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+.loop-controls .btn { min-width: 100px; }
+.btn-start { background: var(--success); color: #1a1a1a; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-sm { padding: 4px 10px; font-size: 13px; text-decoration: none; display: inline-block; }
+
+.stale-badge {
+    display: inline-block;
+    background: var(--warning);
+    color: #1a1a1a;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+}
+.fresh-badge {
+    display: inline-block;
+    background: rgba(135, 217, 108, 0.15);
+    color: var(--success);
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+}
+
+/* Research page */
+.research-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.research-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+}
+.research-filter-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.research-filter-form select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-family: inherit;
+}
+.research-filter-form select:focus { outline: none; border-color: var(--accent); }
+
+.table-scroll { overflow-x: auto; }
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+/* Stock detail modal */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 560px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.modal-header h2 { margin: 0; font-size: 18px; }
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 16px 20px; }
+.modal-section { margin-bottom: 16px; }
+.modal-section:last-child { margin-bottom: 0; }
+.modal-section h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+}
+.modal-rationale {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+}
+/* Clickable rows */
+tr[data-symbol] { cursor: pointer; }
+tr[data-symbol]:hover { background: rgba(74, 158, 255, 0.08); }

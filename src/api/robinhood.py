@@ -1,15 +1,14 @@
 import robin_stocks.robinhood as rh
 import robin_stocks.urls as rh_urls
+from robin_stocks.robinhood.helper import request_post, SESSION, update_session
 import time
 from datetime import datetime
 from pytz import timezone
 import pandas as pd
 
-from . import onepassword
 from ..utils import auth
 from ..utils import logger
 from config import MODE, ROBINHOOD_USERNAME, ROBINHOOD_PASSWORD
-from config import OP_SERVICE_ACCOUNT_NAME, OP_SERVICE_ACCOUNT_TOKEN, OP_VAULT_NAME, OP_ITEM_NAME
 
 account_info_cache = {}
 
@@ -18,10 +17,6 @@ async def login_to_robinhood():
     try:
         # Try to get MFA code from secret first
         mfa_code = auth.get_mfa_code_from_secret()
-
-        # If no MFA secret, try 1Password
-        if not mfa_code and OP_SERVICE_ACCOUNT_NAME and OP_SERVICE_ACCOUNT_TOKEN and OP_VAULT_NAME and OP_ITEM_NAME:
-            mfa_code = await onepassword.get_mfa_code_from_1password()
 
         try:
             if mfa_code:
@@ -243,6 +238,101 @@ def get_watchlist_stocks(name):
     return resp['results']
 
 
+# Get all of the user's watchlists (full list of dicts with display_name, id, etc.)
+def get_all_watchlists():
+    """Return the user's watchlists as a list of dicts.
+
+    Each dict includes at least 'display_name' and 'id'. Powers the web UI's
+    dashboard, which lists everything the user has on Robinhood — not just the
+    bot's analysis subset in WATCHLIST_NAMES.
+    """
+    resp = rh_run_with_retries(rh.account.get_all_watchlists)
+    if resp is None:
+        raise Exception("Error getting watchlists: No response")
+    if isinstance(resp, dict):
+        return resp.get('results', [])
+    return resp or []
+
+
+# Create a new watchlist by name (uses undocumented Robinhood endpoint)
+def create_watchlist(name):
+    """Create a new watchlist via the undocumented Robinhood `/midlands/lists/` POST endpoint.
+
+    `/midlands/lists/default/` (which a GET returns the user's watchlists) does NOT
+    accept POST — it returns 405. The actual create endpoint is `/midlands/lists/`
+    with body `{"display_name": <name>, "list_type": "watchlist"}` — discovered by
+    probing in 2026-05.
+
+    We call SESSION.post directly rather than robin_stocks's `request_post` because
+    `request_post` swallows the HTTP status + body, returning None on any error and
+    making diagnosis impossible.
+
+    Returns dict: {'ok': bool, 'name': str, 'id': str|None, 'error': str|None}
+    """
+    url = "https://api.robinhood.com/midlands/lists/"
+    payload = {"display_name": name, "list_type": "watchlist"}
+    try:
+        update_session('Content-Type', 'application/json')
+        res = SESSION.post(url, json=payload, timeout=16)
+        if res.status_code in (200, 201):
+            try:
+                data = res.json()
+                return {'ok': True, 'name': name, 'id': data.get('id'), 'error': None}
+            except ValueError:
+                return {'ok': True, 'name': name, 'id': None, 'error': None}
+        # Non-2xx: try to extract a useful error message from the response body
+        try:
+            body = res.json()
+            if isinstance(body, dict) and 'detail' in body:
+                err = body['detail']
+            elif isinstance(body, dict):
+                # field-level validation errors come back as {"field": ["msg"]}
+                err = "; ".join(f"{k}: {v}" for k, v in body.items())
+            else:
+                err = str(body)
+        except ValueError:
+            err = res.text.strip() or f'HTTP {res.status_code}'
+        return {'ok': False, 'name': name, 'id': None, 'error': f'HTTP {res.status_code}: {err}'}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'id': None, 'error': str(e)}
+
+
+# Add a stock to an existing watchlist by name
+def add_stock_to_watchlist(name, symbol):
+    """Add a symbol to an existing watchlist by name.
+
+    Returns dict: {'ok': bool, 'name': str, 'symbol': str, 'error': str|None}
+    """
+    try:
+        resp = rh.account.post_symbols_to_watchlist(symbol.upper(), name=name)
+        # post_symbols_to_watchlist returns a list (one entry per symbol)
+        if resp and isinstance(resp, list) and len(resp) > 0:
+            # If any of the entries looks like an error, surface it
+            for entry in resp:
+                if isinstance(entry, dict) and ('detail' in entry or 'error' in entry):
+                    err = entry.get('detail') or entry.get('error') or 'Unknown error'
+                    return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(err)}
+            return {'ok': True, 'name': name, 'symbol': symbol.upper(), 'error': None}
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': f'No response (watchlist "{name}" may not exist)'}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(e)}
+
+
+# Remove a stock from a watchlist by name
+def remove_stock_from_watchlist(name, symbol):
+    """Remove a symbol from a watchlist by name.
+
+    Returns dict: {'ok': bool, 'name': str, 'symbol': str, 'error': str|None}
+    """
+    try:
+        resp = rh.account.delete_symbols_from_watchlist(symbol.upper(), name=name)
+        # delete_symbols_from_watchlist returns a list per symbol; entries are response objects or None
+        # robin_stocks returns the underlying requests.Response, and is fine if it's just non-error.
+        return {'ok': True, 'name': name, 'symbol': symbol.upper(), 'error': None}
+    except Exception as e:
+        return {'ok': False, 'name': name, 'symbol': symbol.upper(), 'error': str(e)}
+
+
 # Get analyst ratings for a stock by symbol
 def get_ratings(symbol):
     resp = rh_run_with_retries(rh.stocks.get_ratings, symbol)
@@ -264,10 +354,15 @@ def sell_stock(symbol, quantity):
     if MODE == "demo":
         return {"id": "demo"}
 
+    if not is_market_open():
+        return {"id": "market_closed"}
+
     if MODE == "manual":
-        confirm = input(f"Confirm sell for {symbol} of {quantity}? (yes/no): ")
-        if confirm.lower() != "yes":
-            return {"id": "cancelled"}
+        # Manual confirmation via input() is incompatible with the background
+        # trading loop. In the unified app, manual mode logs the trade intent
+        # but does not execute. Use the web UI or switch to "auto" mode.
+        logger.info(f"Manual mode: would sell {quantity} of {symbol} — skipping (no interactive prompt in unified app)")
+        return {"id": "cancelled"}
 
     sell_resp = rh_run_with_retries(rh.orders.order_sell_market, symbol, quantity, timeInForce="gfd")
     if sell_resp is None:
@@ -280,10 +375,15 @@ def buy_stock(symbol, quantity):
     if MODE == "demo":
         return {"id": "demo"}
 
+    if not is_market_open():
+        return {"id": "market_closed"}
+
     if MODE == "manual":
-        confirm = input(f"Confirm buy for {symbol} of {quantity}? (yes/no): ")
-        if confirm.lower() != "yes":
-            return {"id": "cancelled"}
+        # Manual confirmation via input() is incompatible with the background
+        # trading loop. In the unified app, manual mode logs the trade intent
+        # but does not execute. Use the web UI or switch to "auto" mode.
+        logger.info(f"Manual mode: would buy {quantity} of {symbol} — skipping (no interactive prompt in unified app)")
+        return {"id": "cancelled"}
 
     buy_resp = rh_run_with_retries(rh.orders.order_buy_market, symbol, quantity, timeInForce="gfd")
     if buy_resp is None:

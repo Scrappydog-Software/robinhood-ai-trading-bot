@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+    <h2>Stock Research</h2>
+    <p class="muted small">
+        Browse and search all tickers from the Massive API.
+        {% if loaded_at %}
+            Last loaded: <strong>{{ loaded_at }}</strong> &middot; {{ ticker_count }} ticker{{ '' if ticker_count == 1 else 's' }} in database.
+        {% else %}
+            No tickers loaded yet. Click <strong>Load Tickers</strong> below to populate.
+        {% endif %}
+    </p>
+
+    <div class="research-controls">
+        <button id="btn-load-tickers" class="btn btn-start">Load / Refresh Tickers</button>
+        <span id="load-status" class="muted small"></span>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Search &amp; Filter</h2>
+    <form method="get" action="{{ url_for('research') }}" class="research-filter-form">
+        <label>
+            Search
+            <input type="text" name="q" value="{{ q or '' }}" placeholder="Ticker or company name">
+        </label>
+        <label>
+            Market
+            <select name="market">
+                <option value="">All</option>
+                {% for m in markets %}
+                    <option value="{{ m }}" {% if market_filter == m %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Type
+            <select name="type">
+                <option value="">All</option>
+                {% for t in types %}
+                    <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Active
+            <select name="active">
+                <option value="" {% if active_filter is none %}selected{% endif %}>All</option>
+                <option value="1" {% if active_filter == 1 %}selected{% endif %}>Active</option>
+                <option value="0" {% if active_filter == 0 %}selected{% endif %}>Inactive</option>
+            </select>
+        </label>
+        <button type="submit" class="btn">Search</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Results <span class="muted small">({{ ticker_count }} match{{ '' if ticker_count == 1 else 'es' }})</span></h2>
+    {% if tickers|length == 0 %}
+        <p class="muted">No tickers found. {% if not loaded_at %}Try loading tickers first.{% endif %}</p>
+    {% else %}
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ticker</th>
+                        <th>Name</th>
+                        <th>Market</th>
+                        <th>Type</th>
+                        <th>Active</th>
+                        <th>Exchange</th>
+                        <th>Currency</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in tickers %}
+                        <tr data-symbol="{{ row['ticker'] }}">
+                            <td><strong>{{ row['ticker'] }}</strong></td>
+                            <td>{{ row['name'] or '—' }}</td>
+                            <td>{{ row['market'] or '—' }}</td>
+                            <td>{{ row['type'] or '—' }}</td>
+                            <td>
+                                {% if row['active'] == 1 %}
+                                    <span class="status-badge status-running">Yes</span>
+                                {% elif row['active'] == 0 %}
+                                    <span class="status-badge status-stopped">No</span>
+                                {% else %}
+                                    <span class="muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ row['primary_exchange'] or '—' }}</td>
+                            <td>{{ row['currency_name'] or '—' }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if total_pages > 1 %}
+            <div class="pagination">
+                {% if page > 1 %}
+                    <a href="{{ url_for('research', q=q, market=market_filter, type=type_filter, active=active_raw, page=page-1) }}" class="btn btn-sm">&laquo; Prev</a>
+                {% endif %}
+                <span class="muted small">Page {{ page }} of {{ total_pages }}</span>
+                {% if page < total_pages %}
+                    <a href="{{ url_for('research', q=q, market=market_filter, type=type_filter, active=active_raw, page=page+1) }}" class="btn btn-sm">Next &raquo;</a>
+                {% endif %}
+            </div>
+        {% endif %}
+    {% endif %}
+</section>
+
+<script>
+(function() {
+    var btn = document.getElementById('btn-load-tickers');
+    var status = document.getElementById('load-status');
+
+    btn.addEventListener('click', function() {
+        btn.disabled = true;
+        status.textContent = 'Loading tickers from Massive API... this may take a minute.';
+        fetch('/api/tickers/load', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.ok) {
+                    status.textContent = 'Loaded ' + data.count + ' tickers. Refreshing...';
+                    setTimeout(function() { location.reload(); }, 1000);
+                } else {
+                    status.textContent = 'Error: ' + (data.error || 'unknown');
+                    btn.disabled = false;
+                }
+            })
+            .catch(function(err) {
+                status.textContent = 'Network error: ' + err;
+                btn.disabled = false;
+            });
+    });
+})();
+</script>
+
+{% endblock %}
