@@ -44,6 +44,33 @@ from src.api import robinhood
 from src.utils import logger
 
 
+def _load_decisions_map():
+    """Read data/last-decisions.json and return a dict mapping symbol -> decision.
+
+    Returns an empty dict if the file is missing or malformed so callers can
+    safely do ``decisions_map.get(symbol)`` without error handling.
+    """
+    if not os.path.exists(LAST_DECISIONS_PATH):
+        return {}
+    try:
+        with open(LAST_DECISIONS_PATH, 'r') as f:
+            payload = json.load(f)
+    except Exception as e:
+        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions map: {e}")
+        return {}
+
+    decisions = payload.get('decisions') or []
+    mapping = {}
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        symbol = d.get('symbol')
+        decision = d.get('decision')
+        if symbol and decision:
+            mapping[symbol] = decision
+    return mapping
+
+
 app = Flask(__name__)
 # Local single-user app — session data does not need to survive restart.
 app.secret_key = os.urandom(24)
@@ -90,6 +117,7 @@ def _build_portfolio_view():
         logger.error(f"Error loading portfolio stocks: {e}")
         return [], str(e), 0.0
 
+    decisions_map = _load_decisions_map()
     rows = []
     total_value = 0.0
     for symbol, data in (holdings or {}).items():
@@ -105,6 +133,7 @@ def _build_portfolio_view():
                 'current_price': round(price, 2),
                 'avg_buy_price': round(avg, 2),
                 'position_value': round(position_value, 2),
+                'recommendation': decisions_map.get(symbol),
             })
         except Exception as e:
             logger.error(f"Error parsing holding {symbol}: {e}")
@@ -232,6 +261,7 @@ def index():
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
     watchlists = _build_watchlists_view()
     recommendations = _build_recommendations_view()
+    decisions_map = _load_decisions_map()
     return render_template(
         'index.html',
         account=account,
@@ -240,6 +270,7 @@ def index():
         portfolio_total=portfolio_total,
         watchlists=watchlists,
         recommendations=recommendations,
+        decisions_map=decisions_map,
     )
 
 
