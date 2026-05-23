@@ -4,6 +4,12 @@ import json
 import asyncio
 
 from config import *
+# Defensive fallback for users whose config.py predates AFTER_HOURS_INTERVAL_SECONDS
+try:
+    AFTER_HOURS_INTERVAL_SECONDS
+except NameError:
+    AFTER_HOURS_INTERVAL_SECONDS = 3600
+
 from src.api import robinhood
 from src.api import claude
 from src.utils import logger
@@ -242,6 +248,9 @@ def trading_bot():
                     if sell_resp['id'] == "demo":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "success", "details": "Demo mode"}
                         logger.info(f"{symbol} > Demo > Sold {quantity} stocks")
+                    elif sell_resp['id'] == "market_closed":
+                        trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "market_closed", "details": "Market closed; analysis-only mode"}
+                        logger.info(f"{symbol} > Market closed > Would have sold {quantity} stocks")
                     elif sell_resp['id'] == "cancelled":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "cancelled", "details": "Cancelled by user"}
                         logger.info(f"{symbol} > Sell cancelled by user")
@@ -264,6 +273,9 @@ def trading_bot():
                     if buy_resp['id'] == "demo":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "success", "details": "Demo mode"}
                         logger.info(f"{symbol} > Demo > Bought {quantity} stocks")
+                    elif buy_resp['id'] == "market_closed":
+                        trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "market_closed", "details": "Market closed; analysis-only mode"}
+                        logger.info(f"{symbol} > Market closed > Would have bought {quantity} stocks")
                     elif buy_resp['id'] == "cancelled":
                         trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "buy", "result": "cancelled", "details": "Cancelled by user"}
                         logger.info(f"{symbol} > Buy cancelled by user")
@@ -297,21 +309,28 @@ async def main():
                 robinhood_token_expiry = time.time() + login_resp['expires_in']
                 logger.info(f"Successfully logged in. Token expires in {login_resp['expires_in']} seconds")
 
-            if robinhood.is_market_open():
+            market_open = robinhood.is_market_open()
+            if market_open:
                 run_interval_seconds = RUN_INTERVAL_SECONDS
                 logger.info(f"Market is open, running trading bot in {MODE} mode...")
-
-                trading_results = trading_bot()
-
-                sold_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "success"]
-                bought_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "success"]
-                errors = [f"{result['symbol']} ({result['details']})" for result in trading_results.values() if result['result'] == "error"]
-                logger.info(f"Sold: {'None' if len(sold_stocks) == 0 else ', '.join(sold_stocks)}")
-                logger.info(f"Bought: {'None' if len(bought_stocks) == 0 else ', '.join(bought_stocks)}")
-                logger.info(f"Errors: {'None' if len(errors) == 0 else ', '.join(errors)}")
             else:
-                run_interval_seconds = 60
-                logger.info("Market is closed, waiting for next run...")
+                run_interval_seconds = AFTER_HOURS_INTERVAL_SECONDS
+                logger.info(f"Market is closed, running analysis only (no order placement) in {MODE} mode...")
+
+            trading_results = trading_bot()
+
+            sold_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "success"]
+            bought_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "success"]
+            would_have_sold = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "market_closed"]
+            would_have_bought = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "market_closed"]
+            errors = [f"{result['symbol']} ({result['details']})" for result in trading_results.values() if result['result'] == "error"]
+            logger.info(f"Sold: {'None' if len(sold_stocks) == 0 else ', '.join(sold_stocks)}")
+            logger.info(f"Bought: {'None' if len(bought_stocks) == 0 else ', '.join(bought_stocks)}")
+            if would_have_sold:
+                logger.info(f"Would have sold (market closed): {', '.join(would_have_sold)}")
+            if would_have_bought:
+                logger.info(f"Would have bought (market closed): {', '.join(would_have_bought)}")
+            logger.info(f"Errors: {'None' if len(errors) == 0 else ', '.join(errors)}")
         except Exception as e:
             run_interval_seconds = 60
             logger.error(f"Trading bot error: {e}")

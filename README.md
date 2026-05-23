@@ -237,6 +237,7 @@ ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
 MODE = "demo"                               # Trading mode (demo, auto, manual)
 LOG_LEVEL = "INFO"                          # Log level (DEBUG, INFO)
 RUN_INTERVAL_SECONDS = 600                  # Trading interval in seconds (if the market is open)
+AFTER_HOURS_INTERVAL_SECONDS = 3600         # Analysis interval when market is closed (analysis runs 24/7; orders only during market hours)
 
 # Robinhood config parameters
 TRADE_EXCEPTIONS = []                       # List of stocks to exclude from trading (e.g. ["AAPL", "TSLA", "AMZN"])
