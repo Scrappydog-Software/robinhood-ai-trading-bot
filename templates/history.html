@@ -45,8 +45,6 @@
                     <th>High</th>
                     <th>Low</th>
                     <th>Close</th>
-                    <th>Volume</th>
-                    <th>VWAP</th>
                     <th>Rec</th>
                     <th>Shares Bought</th>
                     <th>Shares Sold</th>
@@ -62,8 +60,6 @@
                         <td>${{ "%.2f"|format(bar.high or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.low or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.close or 0) }}</td>
-                        <td>{{ "{:,}".format(bar.volume or 0) }}</td>
-                        <td>${{ "%.2f"|format(bar.vwap or 0) }}</td>
                         <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
