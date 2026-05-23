@@ -5,7 +5,8 @@ OP_VAULT_NAME = ""                          # 1Password vault name (for Robinhoo
 OP_ITEM_NAME = ""                           # 1Password item name (for Robinhood MFA secret)
 
 # Credentials
-OPENAI_API_KEY = "..."                      # OpenAI API key
+# Anthropic (Claude) is now used as the AI provider in place of OpenAI.
+ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console.anthropic.com/)
 ROBINHOOD_USERNAME = "..."                  # Robinhood username
 ROBINHOOD_PASSWORD = "..."                  # Robinhood password
 ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
@@ -25,5 +26,5 @@ MAX_SELLING_AMOUNT_USD = 10.0               # Maximum sell amount in USD (False 
 MIN_BUYING_AMOUNT_USD = 1.0                 # Minimum buy amount in USD (False - disable setting)
 MAX_BUYING_AMOUNT_USD = 10.0                # Maximum buy amount in USD (False - disable setting)
 
-# OpenAI config params
-OPENAI_MODEL_NAME = "gpt-4o-mini"           # OpenAI model name
+# Anthropic (Claude) config params
+ANTHROPIC_MODEL_NAME = "claude-sonnet-4-5"  # Anthropic model name (e.g. claude-sonnet-4-5)

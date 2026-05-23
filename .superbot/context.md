@@ -9,7 +9,7 @@
 - **Entry point:** `main.py` at repo root.
 - **Dependencies** (`requirements.txt`):
   - `robin_stocks` — Robinhood API client
-  - `openai` — OpenAI SDK (this project uses **OpenAI's API**, not Anthropic/Claude — do not swap providers without an explicit ADR)
+  - `anthropic` — Anthropic SDK (this project uses **Anthropic's API** / Claude as the LLM provider; migrated from OpenAI in issue #2)
   - `onepassword` — 1Password service-account client (for Robinhood MFA secret)
   - `pandas`, `pytz`, `pyotp`
 - **Package mgmt:** plain `pip install -r requirements.txt`. No poetry / pipenv / pdm / uv.
@@ -20,7 +20,7 @@ main.py                   # orchestration loop
 src/
   api/
     robinhood.py          # all Robinhood interactions (auth, portfolio, orders)
-    openai.py             # LLM prompt construction + completion
+    claude.py             # LLM prompt construction + completion (Anthropic Claude)
     onepassword.py        # MFA secret fetch
   utils/
     auth.py
@@ -31,7 +31,7 @@ Keep new code aligned to that split: API integrations under `src/api/`, helpers 
 ## Configuration
 - `config.py` is **gitignored** and instantiated locally from `config.py.example`.
 - Every new tunable goes in `config.py.example` with a comment, then reads from `config` in code via `from config import *`.
-- Secrets (Robinhood + OpenAI credentials) live in `config.py` or 1Password. **Never** commit a populated `config.py`.
+- Secrets (Robinhood + Anthropic credentials) live in `config.py` or 1Password. **Never** commit a populated `config.py`.
 
 ## Trading modes
 - `MODE = "demo"` — simulate, do not place orders
@@ -44,7 +44,7 @@ Any change that affects order placement (`src/api/robinhood.py`, the AI decision
 - Top-level functions in `main.py`; classes only when state genuinely justifies it.
 - f-string formatting throughout.
 - `logger.py` for output — don't introduce a second logging shim.
-- Async usage is currently scoped to the OpenAI client; don't propagate `async` into Robinhood paths without a reason.
+- Async usage is currently scoped to the Robinhood login path; don't propagate `async` into other paths without a reason.
 
 ## What is NOT used
 - No web framework (Flask / FastAPI / Django).
@@ -56,8 +56,8 @@ Any change that affects order placement (`src/api/robinhood.py`, the AI decision
 ## High-blast-radius areas (always recommend Code Review + QA)
 - `main.py` order-placement and decision-parsing logic
 - `src/api/robinhood.py` — anything touching `order_buy_*` / `order_sell_*`
-- `src/api/openai.py` prompt template or response schema changes
-- `requirements.txt` version bumps for `robin_stocks` or `openai`
+- `src/api/claude.py` prompt template or response schema changes
+- `requirements.txt` version bumps for `robin_stocks` or `anthropic`
 
 This bot moves real money. Treat behavior changes the way you would treat a Lambda hotfix: don't ship without verification, and prefer reversible changes.
 
