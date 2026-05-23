@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+    <h2>{{ ticker_name }} ({{ symbol }}) &mdash; Price History</h2>
+    {% if not status.has_data %}
+        <p class="muted">No historical data loaded for {{ symbol }}. Use the stock detail modal to load 2-year history first.</p>
+        <a href="/" class="btn">&larr; Dashboard</a>
+    {% else %}
+        <p class="muted small">{{ status.bar_count }} trading days &middot; {{ status.earliest_date }} to {{ status.latest_date }}
+            &middot; {{ analyzed_count }} of {{ status.bar_count }} analyzed
+        </p>
+
+        <div class="chart-container">
+            <canvas id="priceChart"></canvas>
+        </div>
+        <div class="chart-container-half">
+            <canvas id="volumeChart"></canvas>
+        </div>
+
+        <div style="margin-bottom:16px; display:flex; gap:8px; align-items:center;">
+            <button class="btn" id="btn-analyze-history">
+                {% if unanalyzed_count == 0 %}All Analyzed{% else %}Analyze {{ unanalyzed_count }} Bars (Haiku){% endif %}
+            </button>
+            <span id="analyze-status" class="muted small"></span>
+        </div>
+
+        <div class="table-scroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Open</th>
+                    <th>High</th>
+                    <th>Low</th>
+                    <th>Close</th>
+                    <th>Volume</th>
+                    <th>VWAP</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bar in bars|reverse %}
+                    <tr>
+                        <td>{{ bar.bar_date }}</td>
+                        <td>${{ "%.2f"|format(bar.open or 0) }}</td>
+                        <td>${{ "%.2f"|format(bar.high or 0) }}</td>
+                        <td>${{ "%.2f"|format(bar.low or 0) }}</td>
+                        <td>${{ "%.2f"|format(bar.close or 0) }}</td>
+                        <td>{{ "{:,}".format(bar.volume or 0) }}</td>
+                        <td>${{ "%.2f"|format(bar.vwap or 0) }}</td>
+                        <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    {% endif %}
+</section>
+
+{% if status.has_data %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    var bars = {{ bars_json|safe }};
+    var labels = bars.map(function(b) { return b.bar_date; });
+    var closes = bars.map(function(b) { return b.close; });
+    var volumes = bars.map(function(b) { return b.volume; });
+
+    var recColors = {
+        'strong_buy': '#00e676', 'buy': '#87d96c',
+        'hold': 'rgba(255,255,255,0.08)',
+        'sell': '#e06c75', 'strong_sell': '#ff1744'
+    };
+    var bgColors = bars.map(function(b) {
+        return recColors[b.recommendation] || 'rgba(255,255,255,0.08)';
+    });
+
+    // Price chart
+    new Chart(document.getElementById('priceChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '{{ symbol }} Close Price',
+                data: closes,
+                borderColor: '#4fc3f7',
+                backgroundColor: 'rgba(79, 195, 247, 0.1)',
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: true,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#aaa', font: { size: 11 } } },
+                tooltip: { callbacks: { label: function(c) { return '$' + c.parsed.y.toFixed(2); } } }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 12, font: { size: 10 } },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                },
+                y: {
+                    ticks: { color: '#4fc3f7', callback: function(v) { return '$' + v.toFixed(0); } },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
+    });
+
+    // Volume + recommendation chart
+    new Chart(document.getElementById('volumeChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Volume (colored by recommendation)',
+                data: volumes,
+                backgroundColor: bgColors,
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#aaa', font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: function(c) {
+                            var rec = bars[c.dataIndex].recommendation || '';
+                            return c.parsed.y.toLocaleString() + ' vol' + (rec ? ' (' + rec + ')' : '');
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 12, font: { size: 10 } },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                },
+                y: {
+                    ticks: { color: '#555', callback: function(v) { return (v/1e6).toFixed(1) + 'M'; } },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
+    });
+
+    // Analyze button
+    var btn = document.getElementById('btn-analyze-history');
+    var status = document.getElementById('analyze-status');
+    if (btn) {
+        btn.addEventListener('click', function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Analyzing with Haiku&hellip;';
+            status.textContent = '';
+
+            fetch('/api/stock/{{ symbol }}/backtest-analyze', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.ok) {
+                        status.textContent = data.analyzed + ' bars analyzed';
+                        setTimeout(function() { window.location.reload(); }, 1500);
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Retry Analysis';
+                        status.textContent = 'Error: ' + (data.error || 'Unknown');
+                    }
+                })
+                .catch(function(err) {
+                    btn.disabled = false;
+                    btn.textContent = 'Retry Analysis';
+                    status.textContent = 'Error: ' + err;
+                });
+        });
+    }
+})();
+</script>
+{% endif %}
+
+{% endblock %}

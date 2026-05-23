@@ -645,6 +645,106 @@ def api_loop_stop():
 
 # ---- Stock Research page ----
 
+@app.route('/api/stock/<symbol>/backtest-analyze', methods=['POST'])
+@csrf.exempt
+def api_backtest_analyze(symbol):
+    """Batch-analyze historical bars using Claude Haiku.
+
+    Sends unanalyzed bars in batches of 20 to Claude Haiku for
+    buy/sell/hold decisions. Stores recommendations in the
+    stock_history table. Skips previously analyzed rows.
+    """
+    symbol = symbol.upper()
+    BATCH_SIZE = 20
+
+    logger.info(f"WebUI: backtest analysis requested for {symbol}")
+
+    try:
+        unanalyzed = db.get_unanalyzed_bars(symbol)
+        if not unanalyzed:
+            return jsonify({'ok': True, 'analyzed': 0, 'message': 'All bars already analyzed'})
+
+        logger.info(f"WebUI: {len(unanalyzed)} unanalyzed bars for {symbol}")
+
+        from anthropic import Anthropic
+        haiku_client = Anthropic(api_key=claude.client.api_key)
+
+        total_analyzed = 0
+        for i in range(0, len(unanalyzed), BATCH_SIZE):
+            batch = unanalyzed[i:i + BATCH_SIZE]
+
+            bars_data = []
+            for bar in batch:
+                bars_data.append({
+                    'date': bar['bar_date'],
+                    'open': bar['open'],
+                    'high': bar['high'],
+                    'low': bar['low'],
+                    'close': bar['close'],
+                    'volume': bar['volume'],
+                    'vwap': bar['vwap'],
+                })
+
+            prompt = (
+                f"You are analyzing historical daily price data for {symbol}.\n\n"
+                f"For each trading day below, provide a buy/sell/hold recommendation "
+                f"based on the OHLCV data and price action patterns.\n\n"
+                f"**Data:**\n```json\n{json.dumps(bars_data, indent=1)}\n```\n\n"
+                f"**Response Format:**\nReturn a JSON array with one entry per day:\n"
+                f'[{{"date": "YYYY-MM-DD", "recommendation": "strong_buy|buy|hold|sell|strong_sell"}}]\n\n'
+                f"Provide only the JSON output with no additional text."
+            )
+
+            resp = haiku_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+            decisions = claude.parse_ai_response(ai_text)
+
+            updates = []
+            for d in decisions:
+                if isinstance(d, dict) and d.get('date') and d.get('recommendation'):
+                    updates.append({
+                        'bar_date': d['date'],
+                        'recommendation': d['recommendation'],
+                    })
+
+            if updates:
+                db.update_bar_recommendations(symbol, updates)
+                total_analyzed += len(updates)
+
+            logger.info(f"WebUI: backtest batch {i//BATCH_SIZE + 1} done, {total_analyzed} analyzed so far")
+
+        logger.info(f"WebUI: backtest complete for {symbol}: {total_analyzed} bars analyzed")
+        return jsonify({'ok': True, 'analyzed': total_analyzed})
+    except Exception as e:
+        logger.error(f"WebUI: backtest analysis error for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/history/<symbol>')
+def stock_history_page(symbol):
+    """Full-page stock price history with chart and data table."""
+    symbol = symbol.upper()
+    bars = db.get_stock_history_bars(symbol)
+    status = db.get_stock_history_status(symbol)
+    ticker = db.get_ticker_by_symbol(symbol)
+    analyzed_count = sum(1 for b in bars if b.get('recommendation'))
+    unanalyzed_count = len(bars) - analyzed_count
+    return render_template(
+        'history.html',
+        symbol=symbol,
+        ticker_name=ticker.get('name') if ticker else symbol,
+        bars=bars,
+        bars_json=json.dumps(bars),
+        status=status,
+        analyzed_count=analyzed_count,
+        unanalyzed_count=unanalyzed_count,
+    )
+
+
 RESEARCH_PAGE_SIZE = 50
 
 

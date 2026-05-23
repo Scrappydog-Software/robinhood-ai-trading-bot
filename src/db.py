@@ -96,10 +96,15 @@ CREATE TABLE IF NOT EXISTS stock_history (
     volume    INTEGER,
     vwap      REAL,
     transactions INTEGER,
+    recommendation TEXT,
     loaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (symbol, bar_date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_history_symbol ON stock_history(symbol);
+"""
+
+_MIGRATION_SQL = """\
+ALTER TABLE stock_history ADD COLUMN recommendation TEXT;
 """
 
 
@@ -113,6 +118,13 @@ def init_db():
     try:
         with _write_lock:
             conn.executescript(_SCHEMA_SQL)
+            for stmt in _MIGRATION_SQL.strip().split(';'):
+                stmt = stmt.strip()
+                if stmt:
+                    try:
+                        conn.execute(stmt)
+                    except Exception:
+                        pass
             conn.commit()
         logger.info("DB: schema initialised (data/market.db)")
     finally:
@@ -318,6 +330,54 @@ def get_stock_history_status(symbol):
         'earliest_date': row['earliest_date'] if row else None,
         'latest_date': row['latest_date'] if row else None,
     }
+
+
+def get_stock_history_bars(symbol):
+    """Return all daily OHLCV bars for a symbol, oldest first."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, open, high, low, close, volume, vwap, transactions, recommendation "
+            "FROM stock_history WHERE symbol = ? ORDER BY bar_date ASC",
+            (symbol.upper(),)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_unanalyzed_bars(symbol):
+    """Return bars without a recommendation, oldest first."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, open, high, low, close, volume, vwap "
+            "FROM stock_history WHERE symbol = ? AND (recommendation IS NULL OR recommendation = '') "
+            "ORDER BY bar_date ASC",
+            (symbol.upper(),)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_bar_recommendations(symbol, updates):
+    """Batch update recommendation column for specific bar_dates.
+
+    ``updates`` is a list of dicts: [{'bar_date': '2024-01-02', 'recommendation': 'buy'}, ...]
+    """
+    conn = _connect()
+    try:
+        with _write_lock:
+            for u in updates:
+                conn.execute(
+                    "UPDATE stock_history SET recommendation = ? WHERE symbol = ? AND bar_date = ?",
+                    (u['recommendation'], symbol.upper(), u['bar_date'])
+                )
+            conn.commit()
+    finally:
+        conn.close()
+    return len(updates)
 
 
 def get_stock_analysis_history(symbol, limit=50):

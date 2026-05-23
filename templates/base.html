@@ -155,10 +155,13 @@
             } else {
                 html += '<p class="muted">No historical data loaded.</p>';
             }
-            html += '<div style="margin-top:8px;">';
+            html += '<div style="margin-top:8px; display:flex; gap:8px; align-items:center;">';
             html += '<button class="btn btn-sm" id="btn-load-history" data-symbol="' + esc(data.symbol) + '">';
             html += 'Load 2-Year History</button>';
-            html += '<span id="history-status" class="muted small" style="margin-left:8px;"></span>';
+            if (data.history_status && data.history_status.has_data) {
+                html += '<a href="/history/' + encodeURIComponent(data.symbol) + '" class="btn btn-sm" style="background:var(--bg-elev);border:1px solid var(--accent);color:var(--accent);">View Chart &amp; Table</a>';
+            }
+            html += '<span id="history-status" class="muted small" style="margin-left:4px;"></span>';
             html += '</div>';
             html += '</div>';
 
