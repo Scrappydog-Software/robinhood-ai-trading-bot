@@ -1,0 +1,29 @@
+# SuperBot relay stub — installed verbatim into target repos by
+# scripts/onboard-repo.js. Forwards issue / PR / comment events to the
+# canonical reusable workflow in scrappydog-software/.github, which holds the
+# OIDC auth + Secrets Manager fetch + bot-loop skip filter in one place.
+#
+# Keep this file as a thin caller. All routing/skip logic belongs in the
+# central reusable workflow so a fix only has to land in one repo.
+#
+# Past incident this filter guards against: ScrappyDog-Web 2026-04-16 bot-PR
+# cascade — full context lives in the central workflow's doc-comment.
+
+name: SuperBot Relay
+
+on:
+  issues:
+    types: [opened, reopened, labeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize, ready_for_review, closed]
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC → AWS role assumption inside the reusable workflow
+
+jobs:
+  relay:
+    uses: Scrappydog-Software/.github/.github/workflows/superbot-relay.yml@main
+    secrets: inherit
