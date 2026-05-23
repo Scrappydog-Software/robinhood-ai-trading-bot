@@ -14,8 +14,6 @@ AFTER_HOURS_INTERVAL_SECONDS = 3600         # Analysis interval in seconds when 
 
 # Robinhood config parameters
 TRADE_EXCEPTIONS = []                       # List of stocks to exclude from trading (e.g. ["AAPL", "TSLA", "AMZN"])
-WATCHLIST_NAMES = []                        # Watchlist names (can be empty, or "My First List", "My Second List", etc.)
-WATCHLIST_OVERVIEW_LIMIT = 10               # Number of stocks to process in decision-making (e.g. 20)
 PORTFOLIO_LIMIT = 10                        # Number of stocks to hold in the portfolio
 MIN_SELLING_AMOUNT_USD = 1.0                # Minimum sell amount in USD (False - disable setting)
 MAX_SELLING_AMOUNT_USD = 10.0               # Maximum sell amount in USD (False - disable setting)

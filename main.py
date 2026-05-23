@@ -181,27 +181,6 @@ def write_last_decisions(decisions_data, market_open):
         logger.error(f"Error writing last-decisions.json: {e}")
 
 
-# Limit watchlist stocks based on the current week number
-def limit_watchlist_stocks(watchlist_stocks, limit):
-    if len(watchlist_stocks) <= limit:
-        return watchlist_stocks
-
-    # Sort watchlist stocks by symbol
-    watchlist_stocks = sorted(watchlist_stocks, key=lambda x: x['symbol'])
-
-    # Get the current month number
-    current_month = datetime.now().month
-
-    # Calculate the number of parts
-    num_parts = (len(watchlist_stocks) + limit - 1) // limit  # Ceiling division
-
-    # Determine the part to return based on the current month number
-    part_index = (current_month - 1) % num_parts
-    start_index = part_index * limit
-    end_index = min(start_index + limit, len(watchlist_stocks))
-
-    return watchlist_stocks[start_index:end_index]
-
 
 # Main trading bot function
 def trading_bot(market_open=None):
@@ -238,14 +217,21 @@ def trading_bot(market_open=None):
         portfolio_overview[symbol] = robinhood.enrich_with_analyst_ratings(portfolio_overview[symbol], ratings_data)
         portfolio_overview[symbol] = robinhood.enrich_with_pdt_restrictions(portfolio_overview[symbol], symbol)
 
-    logger.info("Getting watchlist stocks...")
+    logger.info("Getting all watchlist stocks from Robinhood...")
     watchlist_stocks = []
-    for watchlist_name in WATCHLIST_NAMES:
-        try:
-            watchlist_stocks.extend(robinhood.get_watchlist_stocks(watchlist_name))
-            watchlist_stocks = [dict(t) for t in {tuple(d.items()) for d in watchlist_stocks}]
-        except Exception as e:
-            logger.error(f"Error getting watchlist stocks for {watchlist_name}: {e}")
+    try:
+        all_lists = robinhood.get_all_watchlists()
+        watchlist_names = [w.get('display_name') for w in all_lists if isinstance(w, dict) and w.get('display_name')]
+        logger.info(f"Found {len(watchlist_names)} watchlists: {', '.join(watchlist_names)}")
+        for watchlist_name in watchlist_names:
+            try:
+                stocks = robinhood.get_watchlist_stocks(watchlist_name)
+                watchlist_stocks.extend(stocks)
+                watchlist_stocks = [dict(t) for t in {tuple(d.items()) for d in watchlist_stocks}]
+            except Exception as e:
+                logger.error(f"Error getting watchlist stocks for {watchlist_name}: {e}")
+    except Exception as e:
+        logger.error(f"Error fetching watchlists from Robinhood: {e}")
 
     logger.debug(f"Watchlist stocks total: {len(watchlist_stocks)}")
 

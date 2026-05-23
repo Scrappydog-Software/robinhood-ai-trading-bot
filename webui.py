@@ -141,8 +141,7 @@ csrf = CSRFProtect(app)
 
 
 def _build_watchlists_view():
-    """Fetch ALL of the user's watchlists from Robinhood — not just the
-    ones in WATCHLIST_NAMES (which is the trading-bot's analysis subset).
+    """Fetch ALL of the user's watchlists from Robinhood.
 
     The dashboard is a UI for managing watchlists, so it should reflect
     Robinhood's actual state — including any list the user just created
