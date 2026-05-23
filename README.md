@@ -269,6 +269,16 @@ Start the bot with:
    python main.py
    ```
 
+## Local Web UI
+
+The bot ships with an optional Flask-based web UI for managing watchlists and viewing portfolio state.
+
+- Start: `python webui.py`
+- URL: http://127.0.0.1:5000
+- **Local only:** binds to 127.0.0.1 by design. Do NOT change the bind to 0.0.0.0 or any external address — this app has no authentication and would expose your Robinhood credentials to anyone on the network.
+- Authentication: uses the same `config.py` Robinhood credentials as the bot. The first launch may trigger a Robinhood device-verification push; subsequent launches reuse the pickled session.
+- **Creating watchlists** relies on an undocumented Robinhood API endpoint. If the endpoint has changed since this code was written, the UI will surface a clear error and you can fall back to creating the watchlist in the Robinhood mobile app.
+
 ## ⚠️ Disclaimer
 Please note: This bot is designed solely for educational purposes.
 Trading stocks involves significant risks, and you should only invest money you can afford to lose.

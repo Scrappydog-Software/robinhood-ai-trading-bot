@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+    <h2>Account</h2>
+    {% if account.error %}
+        <p class="error">Error loading account: {{ account.error }}</p>
+    {% else %}
+        <dl class="kv">
+            <dt>Buying Power</dt>
+            <dd>{% if account.buying_power is not none %}${{ account.buying_power }}{% else %}&mdash;{% endif %}</dd>
+            <dt>Portfolio Value (positions)</dt>
+            <dd>${{ portfolio_total }}</dd>
+        </dl>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Portfolio</h2>
+    {% if portfolio_error %}
+        <p class="error">Error loading portfolio: {{ portfolio_error }}</p>
+    {% elif portfolio_rows|length == 0 %}
+        <p class="muted">No holdings.</p>
+    {% else %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Quantity</th>
+                    <th>Current Price</th>
+                    <th>Avg Buy Price</th>
+                    <th>Position Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in portfolio_rows %}
+                    <tr>
+                        <td><strong>{{ row.symbol }}</strong></td>
+                        <td>{{ row.quantity }}</td>
+                        <td>${{ row.current_price }}</td>
+                        <td>${{ row.avg_buy_price }}</td>
+                        <td>${{ row.position_value }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Watchlists</h2>
+    {% if watchlists|length == 0 %}
+        <p class="muted">No watchlists configured. Create one below.</p>
+    {% endif %}
+
+    {% for wl in watchlists %}
+        <div class="watchlist">
+            <h3>{{ wl.name }} <span class="muted">({{ wl.symbols|length }} symbol{{ '' if wl.symbols|length == 1 else 's' }})</span></h3>
+
+            {% if wl.error %}
+                <p class="error">Error loading: {{ wl.error }}</p>
+            {% endif %}
+
+            {% if wl.symbols|length > 0 %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th class="actions-col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for symbol in wl.symbols %}
+                            <tr>
+                                <td><strong>{{ symbol }}</strong></td>
+                                <td class="actions-col">
+                                    <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
+                                        <input type="hidden" name="symbol" value="{{ symbol }}">
+                                        <button type="submit" class="btn btn-danger">Remove</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('add_to_watchlist', name=wl.name) }}" class="inline-form add-symbol-form">
+                <label>
+                    Add symbol:
+                    <input type="text" name="symbol" placeholder="e.g. AAPL" maxlength="10" required>
+                </label>
+                <button type="submit" class="btn">Add</button>
+            </form>
+        </div>
+    {% endfor %}
+</section>
+
+<section class="card">
+    <h2>Create New Watchlist</h2>
+    <form method="post" action="{{ url_for('create_watchlist') }}" class="inline-form">
+        <label>
+            Name:
+            <input type="text" name="name" placeholder="e.g. My New List" maxlength="80" required>
+        </label>
+        <button type="submit" class="btn">Create</button>
+    </form>
+    <p class="muted small">Note: creating watchlists uses an undocumented Robinhood endpoint. If it fails, create the watchlist in the Robinhood app and add its name to <code>WATCHLIST_NAMES</code> in <code>config.py</code>.</p>
+</section>
+
+{% endblock %}
