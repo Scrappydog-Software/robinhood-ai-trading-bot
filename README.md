@@ -274,8 +274,9 @@ Start the bot with:
 The bot ships with an optional Flask-based web UI for managing watchlists and viewing portfolio state.
 
 - Start: `python webui.py`
-- URL: http://127.0.0.1:5000
+- URL: http://127.0.0.1:5001 (configurable via `WEBUI_PORT` in `config.py`)
 - **Local only:** binds to 127.0.0.1 by design. Do NOT change the bind to 0.0.0.0 or any external address — this app has no authentication and would expose your Robinhood credentials to anyone on the network.
+- **Port choice:** default is 5001, not Flask's traditional 5000. On macOS, AirPlay Receiver (Control Center) listens on `*:5000` and returns HTTP 403 to browser requests — even though `127.0.0.1:5000` looks free to `curl` over IPv4, browsers prefer IPv6 (`[::1]:5000`) and hit AirPlay first.
 - Authentication: uses the same `config.py` Robinhood credentials as the bot. The first launch may trigger a Robinhood device-verification push; subsequent launches reuse the pickled session.
 - **Creating watchlists** relies on an undocumented Robinhood API endpoint. If the endpoint has changed since this code was written, the UI will surface a clear error and you can fall back to creating the watchlist in the Robinhood mobile app.
 

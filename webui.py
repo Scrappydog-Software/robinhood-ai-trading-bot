@@ -1,11 +1,11 @@
 """Local-only Flask web UI for the Robinhood AI Trading Bot.
 
-This UI binds to 127.0.0.1:5000 ONLY. It has no authentication and would
+This UI binds to 127.0.0.1:5001 ONLY. It has no authentication and would
 expose your Robinhood credentials to anyone on the network if exposed. NEVER
 change the bind host to 0.0.0.0 or any external interface.
 
 Start: python webui.py
-URL:   http://127.0.0.1:5000
+URL:   http://127.0.0.1:5001
 """
 
 import asyncio
@@ -15,6 +15,14 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
 
 from config import *  # noqa: F401,F403 - same convention as main.py
+# Defensive fallback for users whose config.py predates WEBUI_PORT.
+# Default 5001 (not 5000) because macOS AirPlay Receiver listens on *:5000 IPv6
+# and returns HTTP 403 to browsers via Server: AirTunes — collides invisibly.
+try:
+    WEBUI_PORT
+except NameError:
+    WEBUI_PORT = 5001
+
 from src.api import robinhood
 from src.utils import logger
 
@@ -176,5 +184,5 @@ if __name__ == '__main__':
     # IMPORTANT: bind ONLY to localhost. This app has no authentication —
     # exposing it on 0.0.0.0 (or any external interface) would give anyone
     # on the network unauthenticated access to the Robinhood account.
-    logger.info("WebUI: starting Flask on http://127.0.0.1:5000 (local-only)...")
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    logger.info(f"WebUI: starting Flask on http://127.0.0.1:{WEBUI_PORT} (local-only)...")
+    app.run(host='127.0.0.1', port=WEBUI_PORT, debug=False)

@@ -23,3 +23,6 @@ MAX_BUYING_AMOUNT_USD = 10.0                # Maximum buy amount in USD (False -
 
 # Anthropic (Claude) config params
 ANTHROPIC_MODEL_NAME = "claude-sonnet-4-5"  # Anthropic model name (e.g. claude-sonnet-4-5)
+
+# Web UI config params (used by webui.py — see README "Local Web UI")
+WEBUI_PORT = 5001                           # Local web UI port. NOT 5000 — macOS AirPlay Receiver listens on *:5000 and returns 403 to browsers (Server: AirTunes). Change only if 5001 is taken.
