@@ -10,7 +10,6 @@
 - **Dependencies** (`requirements.txt`):
   - `robin_stocks` — Robinhood API client
   - `anthropic` — Anthropic SDK (this project uses **Anthropic's API** / Claude as the LLM provider; migrated from OpenAI in issue #2)
-  - `onepassword` — 1Password service-account client (for Robinhood MFA secret)
   - `pandas`, `pytz`, `pyotp`
 - **Package mgmt:** plain `pip install -r requirements.txt`. No poetry / pipenv / pdm / uv.
 
@@ -21,7 +20,6 @@ src/
   api/
     robinhood.py          # all Robinhood interactions (auth, portfolio, orders)
     claude.py             # LLM prompt construction + completion (Anthropic Claude)
-    onepassword.py        # MFA secret fetch
   utils/
     auth.py
     logger.py
@@ -31,7 +29,7 @@ Keep new code aligned to that split: API integrations under `src/api/`, helpers 
 ## Configuration
 - `config.py` is **gitignored** and instantiated locally from `config.py.example`.
 - Every new tunable goes in `config.py.example` with a comment, then reads from `config` in code via `from config import *`.
-- Secrets (Robinhood + Anthropic credentials) live in `config.py` or 1Password. **Never** commit a populated `config.py`.
+- Secrets (Robinhood + Anthropic credentials) live in `config.py`. **Never** commit a populated `config.py`.
 
 ## Trading modes
 - `MODE = "demo"` — simulate, do not place orders
