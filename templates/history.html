@@ -12,6 +12,16 @@
             &middot; {{ analyzed_count }} of {{ status.bar_count }} analyzed
         </p>
 
+        {% if analyzed_count > 0 %}
+        <div class="bt-summary" style="margin-bottom:12px; padding:10px 14px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
+            <strong>Backtest:</strong> ${{ "%.2f"|format(initial_capital) }} &rarr; ${{ "%.2f"|format(bt_final) }}
+            <span class="{% if bt_return_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}" style="margin-left:8px; font-weight:700;">
+                {{ "+" if bt_return_pct >= 0 }}{{ bt_return_pct }}%
+            </span>
+            <span class="muted small" style="margin-left:8px;">({{ bt_trades }} round-trip trade{{ '' if bt_trades == 1 else 's' }})</span>
+        </div>
+        {% endif %}
+
         <div class="chart-container">
             <canvas id="priceChart"></canvas>
         </div>
@@ -37,7 +47,11 @@
                     <th>Close</th>
                     <th>Volume</th>
                     <th>VWAP</th>
-                    <th>Recommendation</th>
+                    <th>Rec</th>
+                    <th>Shares Bought</th>
+                    <th>Shares Sold</th>
+                    <th>Sale $</th>
+                    <th>Running Total</th>
                 </tr>
             </thead>
             <tbody>
@@ -51,6 +65,10 @@
                         <td>{{ "{:,}".format(bar.volume or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.vwap or 0) }}</td>
                         <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
+                        <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
+                        <td>{% if bar.bt_sale_amount %}<span style="color:var(--danger)">${{ "%.2f"|format(bar.bt_sale_amount) }}</span>{% else %}&mdash;{% endif %}</td>
+                        <td>{% if bar.bt_running_total is not none %}${{ "%.2f"|format(bar.bt_running_total) }}{% else %}&mdash;{% endif %}</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -64,6 +82,8 @@
 <script>
 (function() {
     var bars = {{ bars_json|safe }};
+    var buyMarkers = {{ buy_markers_json|safe }};
+    var sellMarkers = {{ sell_markers_json|safe }};
     var labels = bars.map(function(b) { return b.bar_date; });
     var closes = bars.map(function(b) { return b.close; });
     var volumes = bars.map(function(b) { return b.volume; });
@@ -77,7 +97,15 @@
         return recColors[b.recommendation] || 'rgba(255,255,255,0.08)';
     });
 
-    // Price chart
+    // Buy marker dataset
+    var buyData = new Array(bars.length).fill(null);
+    buyMarkers.forEach(function(m) { buyData[m.x] = m.y; });
+
+    // Sell marker dataset
+    var sellData = new Array(bars.length).fill(null);
+    sellMarkers.forEach(function(m) { sellData[m.x] = m.y; });
+
+    // Price chart with buy/sell markers
     new Chart(document.getElementById('priceChart').getContext('2d'), {
         type: 'line',
         data: {
@@ -91,6 +119,25 @@
                 pointRadius: 0,
                 fill: true,
                 tension: 0.1
+            }, {
+                label: 'Buy',
+                data: buyData,
+                type: 'scatter',
+                pointStyle: 'triangle',
+                pointRadius: 8,
+                pointBackgroundColor: '#00e676',
+                pointBorderColor: '#00e676',
+                showLine: false
+            }, {
+                label: 'Sell',
+                data: sellData,
+                type: 'scatter',
+                pointStyle: 'triangle',
+                pointRadius: 8,
+                rotation: 180,
+                pointBackgroundColor: '#ff1744',
+                pointBorderColor: '#ff1744',
+                showLine: false
             }]
         },
         options: {
@@ -99,7 +146,15 @@
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { labels: { color: '#aaa', font: { size: 11 } } },
-                tooltip: { callbacks: { label: function(c) { return '$' + c.parsed.y.toFixed(2); } } }
+                tooltip: {
+                    callbacks: {
+                        label: function(c) {
+                            if (c.datasetIndex === 0) return '$' + c.parsed.y.toFixed(2);
+                            if (c.datasetIndex === 1) return 'BUY @ $' + c.parsed.y.toFixed(2);
+                            if (c.datasetIndex === 2) return 'SELL @ $' + c.parsed.y.toFixed(2);
+                        }
+                    }
+                }
             },
             scales: {
                 x: {
@@ -114,7 +169,7 @@
         }
     });
 
-    // Volume + recommendation chart
+    // Volume chart
     new Chart(document.getElementById('volumeChart').getContext('2d'), {
         type: 'bar',
         data: {

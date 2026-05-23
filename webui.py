@@ -733,6 +733,52 @@ def stock_history_page(symbol):
     ticker = db.get_ticker_by_symbol(symbol)
     analyzed_count = sum(1 for b in bars if b.get('recommendation'))
     unanalyzed_count = len(bars) - analyzed_count
+
+    # Backtest simulation: walk oldest→newest
+    INITIAL_CAPITAL = 100.0
+    capital = INITIAL_CAPITAL
+    shares_held = 0.0
+    state = 'waiting_to_buy'  # waiting_to_buy | holding
+    buy_markers = []   # [{x: index, y: price}]
+    sell_markers = []  # [{x: index, y: price}]
+
+    for i, bar in enumerate(bars):
+        bar['bt_shares_bought'] = None
+        bar['bt_shares_sold'] = None
+        bar['bt_sale_amount'] = None
+        bar['bt_running_total'] = None
+        rec = (bar.get('recommendation') or '').lower()
+
+        if state == 'waiting_to_buy' and rec in ('buy', 'strong_buy'):
+            close_price = bar.get('close') or 0
+            if close_price > 0 and capital > 0:
+                shares_held = capital / close_price
+                bar['bt_shares_bought'] = round(shares_held, 6)
+                bar['bt_running_total'] = round(capital, 2)
+                buy_markers.append({'x': i, 'y': close_price, 'date': bar['bar_date']})
+                state = 'holding'
+            else:
+                bar['bt_running_total'] = round(capital, 2)
+        elif state == 'holding' and rec in ('sell', 'strong_sell'):
+            open_price = bar.get('open') or 0
+            sale_amount = shares_held * open_price
+            bar['bt_shares_sold'] = round(shares_held, 6)
+            bar['bt_sale_amount'] = round(sale_amount, 2)
+            capital = sale_amount
+            bar['bt_running_total'] = round(capital, 2)
+            sell_markers.append({'x': i, 'y': open_price, 'date': bar['bar_date']})
+            shares_held = 0.0
+            state = 'waiting_to_buy'
+        else:
+            if state == 'holding' and shares_held > 0:
+                bar['bt_running_total'] = round(shares_held * (bar.get('close') or 0), 2)
+            else:
+                bar['bt_running_total'] = round(capital, 2)
+
+    bt_final = capital if state == 'waiting_to_buy' else round(shares_held * (bars[-1].get('close') or 0), 2) if bars else INITIAL_CAPITAL
+    bt_return_pct = round((bt_final - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100, 1) if INITIAL_CAPITAL > 0 else 0
+    bt_trades = len(sell_markers)
+
     return render_template(
         'history.html',
         symbol=symbol,
@@ -742,6 +788,12 @@ def stock_history_page(symbol):
         status=status,
         analyzed_count=analyzed_count,
         unanalyzed_count=unanalyzed_count,
+        buy_markers_json=json.dumps(buy_markers),
+        sell_markers_json=json.dumps(sell_markers),
+        bt_final=bt_final,
+        bt_return_pct=bt_return_pct,
+        bt_trades=bt_trades,
+        initial_capital=INITIAL_CAPITAL,
     )
 
 
