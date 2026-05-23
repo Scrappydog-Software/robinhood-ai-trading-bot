@@ -77,7 +77,8 @@ def make_ai_decisions(account_info, portfolio_overview, watchlist_overview):
         "- <rationale>: A brief explanation of WHY this decision was made, referencing specific data points (e.g. RSI, VWAP, moving averages, analyst ratings) that influenced the decision.\n\n"
         "**Instructions:**\n"
         "- Provide only the JSON output with no additional text.\n"
-        "- Return an empty array if no actions are necessary."
+        "- Return a decision for EVERY stock in the data — use `hold` with quantity 0 for stocks that should not be traded.\n"
+        "- Do NOT omit stocks — every symbol must appear in the response."
     )
     logger.debug(f"AI making-decisions prompt:{chr(10)}{ai_prompt}")
     ai_response = claude.make_ai_request(ai_prompt)
