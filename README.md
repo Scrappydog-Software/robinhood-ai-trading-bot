@@ -4,7 +4,7 @@
 
 ## ⚡ Overview
 The **Robinhood AI Trading Bot** is a simple Python script
-that combines **OpenAI's intelligence** with **Robinhood's trading capabilities**
+that combines **Anthropic Claude's intelligence** with **Robinhood's trading capabilities**
 to help automate and optimize stock trading decisions.
 By analyzing **Relative Strength Index (RSI)**, **Volume-Weighted Average Price (VWAP)**,
 **Moving Averages**, and **Robinhood analyst ratings**, the bot generates buy, sell,
@@ -29,7 +29,7 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 ✅ **Workday Scheduling** – Align trading activity with market hours.
 
 ## 🚀 Getting Started
-1. **Connect Your Accounts**: Add your OpenAI API Key and Robinhood credentials.
+1. **Connect Your Accounts**: Add your Anthropic API Key and Robinhood credentials.
 2. **Choose a Mode**:
    - **Demo Mode**: Simulates trades without execution.
    - **Manual Mode**: Requires confirmation before executing trades.
@@ -37,14 +37,14 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 3. **Monitor and Adjust**: Review trade logs and fine-tune settings for optimal performance.
 
 ## 📊 How It Works
-1. **Authenticate**: Logs into OpenAI and Robinhood.
+1. **Authenticate**: Logs into Anthropic and Robinhood.
 2. **Fetch Data**: Retrieves stocks from your **portfolio** and **watchlist**.
 3. **Analyze Market Conditions**:
    - **RSI**: Determines overbought/oversold conditions.
    - **VWAP**: Identifies undervalued/overvalued stocks.
    - **Moving Averages**: Evaluates price trends (50-day and 200-day).
    - **Analyst Ratings**: Incorporates Robinhood's expert opinions.
-4. **AI-Driven Decisions**: Uses OpenAI to generate trading recommendations.
+4. **AI-Driven Decisions**: Uses Anthropic Claude to generate trading recommendations.
 5. **Trade Execution**: Buys, sells, or holds stocks based on AI insights.
 6. **Continuous Monitoring**: Repeats analysis and trades as the market evolves.
 
@@ -69,7 +69,7 @@ to explore how AI can enhance stock trading decisions — potentially outperform
 - Provides sentiment analysis based on expert insights.
 
 ## 🤖 AI-Powered Decision Making
-The bot formulates decisions using OpenAI based on:
+The bot formulates decisions using Anthropic Claude based on:
 - RSI, VWAP, moving averages, and analyst ratings.
 - User-defined constraints (e.g., budget, stock exclusions, portfolio size).
 - Pattern Day Trading (PDT) status to prevent PDT designation.
@@ -234,7 +234,7 @@ OP_VAULT_NAME = "..."                       # 1Password vault name (for Robinhoo
 OP_ITEM_NAME = "..."                        # 1Password item name (for Robinhood MFA secret)
 
 # Credentials
-OPENAI_API_KEY = "..."                      # OpenAI API key
+ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console.anthropic.com/)
 ROBINHOOD_USERNAME = "..."                  # Robinhood username
 ROBINHOOD_PASSWORD = "..."                  # Robinhood password
 ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
@@ -254,8 +254,8 @@ MAX_SELLING_AMOUNT_USD = 10.0               # Maximum sell amount in USD (False 
 MIN_BUYING_AMOUNT_USD = 1.0                 # Minimum buy amount in USD (False - disable setting)
 MAX_BUYING_AMOUNT_USD = 10.0                # Maximum buy amount in USD (False - disable setting)
 
-# OpenAI config params
-OPENAI_MODEL_NAME = "gpt-4o-mini"           # OpenAI model name
+# Anthropic (Claude) config params
+ANTHROPIC_MODEL_NAME = "claude-sonnet-4-5"  # Anthropic model name (e.g. claude-sonnet-4-5)
 ```
 
 #### Robinhood MFA Setup

@@ -1,5 +1,5 @@
 robin_stocks~=3.0.0
-openai~=1.68.2
+anthropic~=0.40.0
 onepassword~=0.4.1
 pandas~=2.2.3
 pytz~=2024.2
