@@ -12,6 +12,7 @@ import asyncio
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_wtf.csrf import CSRFProtect
 
 from config import *  # noqa: F401,F403 - same convention as main.py
 from src.api import robinhood
@@ -21,6 +22,10 @@ from src.utils import logger
 app = Flask(__name__)
 # Local single-user app — session data does not need to survive restart.
 app.secret_key = os.urandom(24)
+# CSRF protection on all POST forms — defense in depth even though the bind is
+# 127.0.0.1-only. Without this, a malicious page opened in the same browser
+# could cross-site POST to our forms.
+csrf = CSRFProtect(app)
 
 
 def _build_watchlists_view():

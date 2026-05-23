@@ -76,6 +76,7 @@
                                 <td><strong>{{ symbol }}</strong></td>
                                 <td class="actions-col">
                                     <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="symbol" value="{{ symbol }}">
                                         <button type="submit" class="btn btn-danger">Remove</button>
                                     </form>
@@ -87,6 +88,7 @@
             {% endif %}
 
             <form method="post" action="{{ url_for('add_to_watchlist', name=wl.name) }}" class="inline-form add-symbol-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label>
                     Add symbol:
                     <input type="text" name="symbol" placeholder="e.g. AAPL" maxlength="10" required>
@@ -100,6 +102,7 @@
 <section class="card">
     <h2>Create New Watchlist</h2>
     <form method="post" action="{{ url_for('create_watchlist') }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>
             Name:
             <input type="text" name="name" placeholder="e.g. My New List" maxlength="80" required>
