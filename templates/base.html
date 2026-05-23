@@ -7,8 +7,16 @@
 </head>
 <body>
     <header>
-        <h1>Robinhood AI Trading Bot</h1>
-        <p class="subtitle">Local web UI &middot; <code>127.0.0.1:5000</code></p>
+        <div class="header-row">
+            <div>
+                <h1>Robinhood AI Trading Bot</h1>
+                <p class="subtitle">Local web UI &middot; <code>127.0.0.1:5001</code></p>
+            </div>
+            <nav class="main-nav">
+                <a href="{{ url_for('index') }}">Dashboard</a>
+                <a href="{{ url_for('research') }}">Research</a>
+            </nav>
+        </div>
     </header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}

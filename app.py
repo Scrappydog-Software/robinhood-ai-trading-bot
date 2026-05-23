@@ -27,6 +27,7 @@ except NameError:
     WEBUI_PORT = 5001
 
 from src.api import robinhood
+from src import db
 from src.state import trading_state
 from src.trading import loop as trading_loop
 from src.utils import logger
@@ -37,6 +38,9 @@ from webui import app
 
 def main():
     """Authenticate, start trading loop, and run the web server."""
+
+    # --- Initialise SQLite database ---
+    db.init_db()
 
     # --- Single Robinhood login at startup ---
     logger.info("App: logging in to Robinhood...")
