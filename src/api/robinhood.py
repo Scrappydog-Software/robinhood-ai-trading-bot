@@ -5,11 +5,9 @@ from datetime import datetime
 from pytz import timezone
 import pandas as pd
 
-from . import onepassword
 from ..utils import auth
 from ..utils import logger
 from config import MODE, ROBINHOOD_USERNAME, ROBINHOOD_PASSWORD
-from config import OP_SERVICE_ACCOUNT_NAME, OP_SERVICE_ACCOUNT_TOKEN, OP_VAULT_NAME, OP_ITEM_NAME
 
 account_info_cache = {}
 
@@ -18,10 +16,6 @@ async def login_to_robinhood():
     try:
         # Try to get MFA code from secret first
         mfa_code = auth.get_mfa_code_from_secret()
-
-        # If no MFA secret, try 1Password
-        if not mfa_code and OP_SERVICE_ACCOUNT_NAME and OP_SERVICE_ACCOUNT_TOKEN and OP_VAULT_NAME and OP_ITEM_NAME:
-            mfa_code = await onepassword.get_mfa_code_from_1password()
 
         try:
             if mfa_code:

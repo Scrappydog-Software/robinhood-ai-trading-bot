@@ -227,12 +227,6 @@ Copy the example config and update it with your details::
 
 Fill in config.py with the required parameters:
 ```python
-# 1Password Credentials
-OP_SERVICE_ACCOUNT_NAME = "..."             # 1Password service account name (for Robinhood MFA secret)
-OP_SERVICE_ACCOUNT_TOKEN = "..."            # 1Password service account token (for Robinhood MFA secret)
-OP_VAULT_NAME = "..."                       # 1Password vault name (for Robinhood MFA secret)
-OP_ITEM_NAME = "..."                        # 1Password item name (for Robinhood MFA secret)
-
 # Credentials
 ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console.anthropic.com/)
 ROBINHOOD_USERNAME = "..."                  # Robinhood username
@@ -259,33 +253,14 @@ ANTHROPIC_MODEL_NAME = "claude-sonnet-4-5"  # Anthropic model name (e.g. claude-
 ```
 
 #### Robinhood MFA Setup
-If MFA is enabled, you'll need to provide an MFA code. There are two options:
+If MFA is enabled, you'll need to provide an MFA code via `ROBINHOOD_MFA_SECRET`:
 
-##### Option 1: Use `ROBINHOOD_MFA_SECRET` (Local MFA Code)
-If you prefer to set the MFA secret directly, follow these steps:
 1. Log in to your Robinhood account on your phone. Important to use your phone because it will display the secret key but not the QR code.
 2. Navigate to the security settings.
 3. Enable MFA if it is not already enabled. When setting up MFA, you will be asked to select an authentication method on your phone. Choose "Authenticator app" and Robinhood will provide you with a secret key. This is your `ROBINHOOD_MFA_SECRET`.
 4. Copy this secret key and set it as the `ROBINHOOD_MFA_SECRET` environment variable or paste it directly into the `config.py` file.
 5. Enter the same secret key into your authentication app on the same PC where you run the script (e.g., Google Authenticator). Note: If you enter the secret on a different device, it will generate a different value.
 6. After entering the same secret on the same PC, use the generated TOTP number to authenticate with the Robinhood app.
-
-##### Option 2: Use 1Password (Auto MFA Retrieval)
-If you do not set the `ROBINHOOD_MFA_SECRET` environment variable, the script will attempt to retrieve the MFA secret from 1Password using the following credentials:
-```python
-# 1Password Credentials
-OP_SERVICE_ACCOUNT_NAME = "..."             # 1Password service account name (for Robinhood MFA secret)
-OP_SERVICE_ACCOUNT_TOKEN = "..."            # 1Password service account token (for Robinhood MFA secret)
-OP_VAULT_NAME = "..."                       # 1Password vault name (for Robinhood MFA secret)
-OP_ITEM_NAME = "..."                        # 1Password item name (for Robinhood MFA secret)
-```
-
-To use this feature:
-1. Ensure the above 1Password credentials are correctly configured in your environment or `config.py` file.
-2. Store your Robinhood MFA secret in the specified 1Password vault and item.
-3. The script will automatically fetch the MFA secret from 1Password if `ROBINHOOD_MFA_SECRET` is not provided.
-
-For more information on setting up 1Password Service Accounts, read the guide: [Get started with 1Password Service Accounts](https://developer.1password.com/docs/service-accounts/get-started/)
 
 ### Running the Bot
 Start the bot with:

@@ -1,9 +1,3 @@
-# 1Password Credentials
-OP_SERVICE_ACCOUNT_NAME = ""                # 1Password service account name (for Robinhood MFA secret)
-OP_SERVICE_ACCOUNT_TOKEN = ""               # 1Password service account token (for Robinhood MFA secret)
-OP_VAULT_NAME = ""                          # 1Password vault name (for Robinhood MFA secret)
-OP_ITEM_NAME = ""                           # 1Password item name (for Robinhood MFA secret)
-
 # Credentials
 # Anthropic (Claude) is now used as the AI provider in place of OpenAI.
 ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console.anthropic.com/)
