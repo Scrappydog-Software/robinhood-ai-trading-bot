@@ -4,16 +4,18 @@ This UI binds to 127.0.0.1:5001 ONLY. It has no authentication and would
 expose your Robinhood credentials to anyone on the network if exposed. NEVER
 change the bind host to 0.0.0.0 or any external interface.
 
-Start: python webui.py
-URL:   http://127.0.0.1:5001
+Preferred start: python app.py   (unified entry point)
+Legacy start:    python webui.py (standalone, deprecated)
+URL:             http://127.0.0.1:5001
 """
 
 import asyncio
 import json
 import os
+import warnings
 from datetime import datetime, timezone
 
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
 
 from config import *  # noqa: F401,F403 - same convention as main.py
@@ -41,15 +43,36 @@ except NameError:
 LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
+from src.state import trading_state
+from src.trading import loop as trading_loop
 from src.utils import logger
 
 
 def _load_decisions_map():
-    """Read data/last-decisions.json and return a dict mapping symbol -> decision.
+    """Return a dict mapping symbol -> decision from the most recent cycle.
 
-    Returns an empty dict if the file is missing or malformed so callers can
-    safely do ``decisions_map.get(symbol)`` without error handling.
+    Reads from in-process shared state first (populated by the unified app's
+    trading loop). Falls back to data/last-decisions.json if shared state is
+    empty (backward compatibility when running webui.py standalone alongside
+    a separate main.py process).
+
+    Returns an empty dict if no data is available so callers can safely do
+    ``decisions_map.get(symbol)`` without error handling.
     """
+    # Try in-process shared state first
+    state_decisions = trading_state.decisions
+    if state_decisions:
+        mapping = {}
+        for d in state_decisions:
+            if not isinstance(d, dict):
+                continue
+            symbol = d.get('symbol')
+            decision = d.get('decision')
+            if symbol and decision:
+                mapping[symbol] = decision
+        return mapping
+
+    # Fall back to JSON file
     if not os.path.exists(LAST_DECISIONS_PATH):
         return {}
     try:
@@ -152,26 +175,10 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
-def _build_recommendations_view():
-    """Load the most recent cycle's filtered AI decisions from disk and shape
-    them for the template.
+def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle):
+    """Common logic to shape a decisions list into the template view dict.
 
-    Contract is the inverse of main.write_last_decisions:
-      - missing file       -> available=False, error=None (template can say
-                              "no recent recommendations, start main.py")
-      - malformed JSON     -> available=False, error=<msg>
-      - parsed OK          -> available=True, rows filtered to buy/sell only,
-                              sorted by (decision: buy<sell, then symbol asc).
-                              stale flag computed against RUN_INTERVAL or
-                              AFTER_HOURS_INTERVAL depending on whether the
-                              market was open at write time.
-      - hold-count          -> exposed separately so the template can render
-                              "N hold decisions filtered out" when the visible
-                              rows list is empty but the cycle did run.
-
-    Holds are filtered out HERE rather than at write time so other consumers
-    of data/last-decisions.json (debugging, future analytics) can still see
-    the model's full output.
+    Used by both the in-process state path and the JSON file fallback.
     """
     empty = {
         'available': False,
@@ -184,24 +191,10 @@ def _build_recommendations_view():
         'error': None,
     }
 
-    if not os.path.exists(LAST_DECISIONS_PATH):
+    if decisions is None:
         return empty
 
-    try:
-        with open(LAST_DECISIONS_PATH, 'r') as f:
-            payload = json.load(f)
-    except Exception as e:
-        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH}: {e}")
-        result = dict(empty)
-        result['error'] = str(e)
-        return result
-
-    timestamp = payload.get('timestamp')
-    market_open_at_cycle = payload.get('market_open')
-    decisions = payload.get('decisions') or []
-
-    # Compute age. The timestamp is ISO-8601 with a literal 'Z' suffix —
-    # fromisoformat in Py3.10 doesn't accept 'Z' directly, so swap to '+00:00'.
+    # Compute age from timestamp
     age_seconds = None
     if isinstance(timestamp, str):
         try:
@@ -228,7 +221,6 @@ def _build_recommendations_view():
             hold_count += 1
             continue
         if decision not in ('buy', 'sell'):
-            # Defensive: skip anything that isn't buy/sell/hold.
             continue
         try:
             quantity = float(d.get('quantity', 0) or 0)
@@ -255,6 +247,72 @@ def _build_recommendations_view():
     }
 
 
+def _build_recommendations_view():
+    """Load the most recent cycle's filtered AI decisions and shape them
+    for the template.
+
+    Reads from in-process shared state first (populated by the unified app's
+    trading loop). Falls back to data/last-decisions.json if shared state has
+    no decisions (backward compatibility when running webui.py standalone
+    alongside a separate main.py process).
+
+    Contract:
+      - no data            -> available=False, error=None (template says
+                              "no recent recommendations")
+      - malformed JSON     -> available=False, error=<msg>
+      - parsed OK          -> available=True, rows filtered to buy/sell only,
+                              sorted by (decision: buy<sell, then symbol asc).
+                              stale flag computed against RUN_INTERVAL or
+                              AFTER_HOURS_INTERVAL depending on whether the
+                              market was open at write time.
+      - hold-count         -> exposed separately so the template can render
+                              "N hold decisions filtered out" when the visible
+                              rows list is empty but the cycle did run.
+
+    Holds are filtered out HERE rather than at write time so other consumers
+    of data/last-decisions.json (debugging, future analytics) can still see
+    the model's full output.
+    """
+    empty = {
+        'available': False,
+        'timestamp': None,
+        'age_seconds': None,
+        'stale': False,
+        'market_open_at_cycle': None,
+        'rows': [],
+        'hold_count': 0,
+        'error': None,
+    }
+
+    # Try in-process shared state first
+    state = trading_state.snapshot()
+    if state['decisions']:
+        return _build_recommendations_from_decisions(
+            state['decisions'],
+            state['last_cycle_time'],
+            state['market_open'],
+        )
+
+    # Fall back to JSON file
+    if not os.path.exists(LAST_DECISIONS_PATH):
+        return empty
+
+    try:
+        with open(LAST_DECISIONS_PATH, 'r') as f:
+            payload = json.load(f)
+    except Exception as e:
+        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH}: {e}")
+        result = dict(empty)
+        result['error'] = str(e)
+        return result
+
+    return _build_recommendations_from_decisions(
+        payload.get('decisions') or [],
+        payload.get('timestamp'),
+        payload.get('market_open'),
+    )
+
+
 @app.route('/')
 def index():
     account = _build_account_view()
@@ -262,6 +320,7 @@ def index():
     watchlists = _build_watchlists_view()
     recommendations = _build_recommendations_view()
     decisions_map = _load_decisions_map()
+    loop_status = trading_state.snapshot()
     return render_template(
         'index.html',
         account=account,
@@ -271,6 +330,7 @@ def index():
         watchlists=watchlists,
         recommendations=recommendations,
         decisions_map=decisions_map,
+        loop_status=loop_status,
     )
 
 
@@ -331,7 +391,53 @@ def remove_from_watchlist(name):
     return redirect(url_for('index'))
 
 
+# ---- API routes for trading loop control ----
+
+@app.route('/api/status')
+def api_status():
+    """Return the current trading loop status as JSON."""
+    state = trading_state.snapshot()
+    return jsonify({
+        'loop_running': state['loop_running'],
+        'last_cycle_time': state['last_cycle_time'],
+        'last_cycle_error': state['last_cycle_error'],
+        'market_open': state['market_open'],
+        'logged_in': state['logged_in'],
+    })
+
+
+@app.route('/api/loop/start', methods=['POST'])
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_loop_start():
+    """Start the trading loop. Returns JSON status."""
+    started = trading_loop.start()
+    return jsonify({
+        'ok': True,
+        'started': started,
+        'loop_running': trading_loop.is_running(),
+    })
+
+
+@app.route('/api/loop/stop', methods=['POST'])
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_loop_stop():
+    """Stop the trading loop. Returns JSON status."""
+    stopped = trading_loop.stop()
+    return jsonify({
+        'ok': True,
+        'stopped': stopped,
+        'loop_running': trading_loop.is_running(),
+    })
+
+
 if __name__ == '__main__':
+    warnings.warn(
+        "Running webui.py directly is deprecated. Use 'python app.py' for the "
+        "unified application (Flask web UI + trading loop). webui.py standalone "
+        "mode will continue to work but may be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     # Authenticate to Robinhood once at startup. login_to_robinhood is async.
     logger.info("WebUI: logging in to Robinhood...")
     login_resp = asyncio.run(robinhood.login_to_robinhood())

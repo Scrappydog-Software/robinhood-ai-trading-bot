@@ -1,4 +1,5 @@
 import time
+import warnings
 from datetime import datetime, timezone
 import json
 import os
@@ -13,6 +14,7 @@ except NameError:
 
 from src.api import robinhood
 from src.api import claude
+from src.state import trading_state
 from src.utils import logger
 
 
@@ -144,19 +146,28 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
 #   - Errors:      any IO failure is logged and swallowed. A failed write must
 #                  not kill the trading loop.
 def write_last_decisions(decisions_data, market_open):
+    # Update in-process shared state so the web UI gets live data
+    # without a disk round-trip.
+    normalized = [
+        {
+            'symbol': d.get('symbol'),
+            'decision': d.get('decision'),
+            'quantity': d.get('quantity', 0),
+        }
+        for d in (decisions_data or [])
+    ]
+    trading_state.update(
+        decisions=normalized,
+        market_open=bool(market_open),
+    )
+
+    # Also write to disk as a side-effect for debugging / external tools.
     try:
         os.makedirs('data', exist_ok=True)
         payload = {
             'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
             'market_open': bool(market_open),
-            'decisions': [
-                {
-                    'symbol': d.get('symbol'),
-                    'decision': d.get('decision'),
-                    'quantity': d.get('quantity', 0),
-                }
-                for d in (decisions_data or [])
-            ],
+            'decisions': normalized,
         }
         final_path = os.path.join('data', 'last-decisions.json')
         tmp_path = final_path + '.tmp'
@@ -393,8 +404,15 @@ async def main():
         time.sleep(run_interval_seconds)
 
 
-# Run the main function
+# Run the main function (deprecated — use ``python app.py`` instead)
 if __name__ == '__main__':
+    warnings.warn(
+        "Running main.py directly is deprecated. Use 'python app.py' for the "
+        "unified application (Flask web UI + trading loop). main.py will "
+        "continue to work but may be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     confirm = input(f"Are you sure you want to run the bot in {MODE} mode? (yes/no): ")
     if confirm.lower() != "yes":
         logger.warning("Exiting the bot...")
