@@ -94,3 +94,48 @@ input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .muted { color: var(--text-muted); }
 .small { font-size: 12px; }
 .error { color: var(--danger); }
+
+/* Recommendations section — color the Decision cell (2nd column) and add a
+   subtle left accent on the row so buy/sell distinctions are visible at a
+   glance without being garish on the dark theme. */
+tr.buy td:nth-child(2) {
+    color: var(--success);
+    border-left: 2px solid var(--success);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+tr.sell td:nth-child(2) {
+    color: var(--danger);
+    border-left: 2px solid var(--danger);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.stale-badge {
+    display: inline-block;
+    background: var(--warning);
+    color: #1a1a1a;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+}
+.fresh-badge {
+    display: inline-block;
+    background: rgba(135, 217, 108, 0.15);
+    color: var(--success);
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+}

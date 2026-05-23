@@ -9,7 +9,9 @@ URL:   http://127.0.0.1:5001
 """
 
 import asyncio
+import json
 import os
+from datetime import datetime, timezone
 
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
@@ -22,6 +24,21 @@ try:
     WEBUI_PORT
 except NameError:
     WEBUI_PORT = 5001
+# Defensive fallbacks for the staleness window — same try/except NameError
+# pattern as elsewhere. These come from config.py in normal use; the fallbacks
+# only matter when running against a config.py that predates these keys.
+try:
+    RUN_INTERVAL_SECONDS
+except NameError:
+    RUN_INTERVAL_SECONDS = 600
+try:
+    AFTER_HOURS_INTERVAL_SECONDS
+except NameError:
+    AFTER_HOURS_INTERVAL_SECONDS = 3600
+
+# Path to the JSON file written by main.py each cycle. Resolved relative to
+# webui's CWD (same convention main.py uses when writing).
+LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
 from src.utils import logger
@@ -106,11 +123,115 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
+def _build_recommendations_view():
+    """Load the most recent cycle's filtered AI decisions from disk and shape
+    them for the template.
+
+    Contract is the inverse of main.write_last_decisions:
+      - missing file       -> available=False, error=None (template can say
+                              "no recent recommendations, start main.py")
+      - malformed JSON     -> available=False, error=<msg>
+      - parsed OK          -> available=True, rows filtered to buy/sell only,
+                              sorted by (decision: buy<sell, then symbol asc).
+                              stale flag computed against RUN_INTERVAL or
+                              AFTER_HOURS_INTERVAL depending on whether the
+                              market was open at write time.
+      - hold-count          -> exposed separately so the template can render
+                              "N hold decisions filtered out" when the visible
+                              rows list is empty but the cycle did run.
+
+    Holds are filtered out HERE rather than at write time so other consumers
+    of data/last-decisions.json (debugging, future analytics) can still see
+    the model's full output.
+    """
+    empty = {
+        'available': False,
+        'timestamp': None,
+        'age_seconds': None,
+        'stale': False,
+        'market_open_at_cycle': None,
+        'rows': [],
+        'hold_count': 0,
+        'error': None,
+    }
+
+    if not os.path.exists(LAST_DECISIONS_PATH):
+        return empty
+
+    try:
+        with open(LAST_DECISIONS_PATH, 'r') as f:
+            payload = json.load(f)
+    except Exception as e:
+        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH}: {e}")
+        result = dict(empty)
+        result['error'] = str(e)
+        return result
+
+    timestamp = payload.get('timestamp')
+    market_open_at_cycle = payload.get('market_open')
+    decisions = payload.get('decisions') or []
+
+    # Compute age. The timestamp is ISO-8601 with a literal 'Z' suffix —
+    # fromisoformat in Py3.10 doesn't accept 'Z' directly, so swap to '+00:00'.
+    age_seconds = None
+    if isinstance(timestamp, str):
+        try:
+            ts_norm = timestamp.replace('Z', '+00:00')
+            file_dt = datetime.fromisoformat(ts_norm)
+            age_seconds = int((datetime.now(timezone.utc) - file_dt).total_seconds())
+        except Exception as e:
+            logger.error(f"WebUI: error parsing timestamp '{timestamp}': {e}")
+
+    # Stale if older than the cadence the bot would have used.
+    stale = False
+    if age_seconds is not None:
+        threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
+        stale = age_seconds > threshold
+
+    # Filter holds, count them for the "N holds filtered out" hint.
+    hold_count = 0
+    rows = []
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        decision = d.get('decision')
+        if decision == 'hold':
+            hold_count += 1
+            continue
+        if decision not in ('buy', 'sell'):
+            # Defensive: skip anything that isn't buy/sell/hold.
+            continue
+        try:
+            quantity = float(d.get('quantity', 0) or 0)
+        except (TypeError, ValueError):
+            quantity = 0.0
+        rows.append({
+            'symbol': d.get('symbol'),
+            'decision': decision,
+            'quantity': quantity,
+        })
+
+    # Predictable order: buys first, then sells, then alphabetic by symbol.
+    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
+
+    return {
+        'available': True,
+        'timestamp': timestamp,
+        'age_seconds': age_seconds,
+        'stale': stale,
+        'market_open_at_cycle': bool(market_open_at_cycle) if market_open_at_cycle is not None else None,
+        'rows': rows,
+        'hold_count': hold_count,
+        'error': None,
+    }
+
+
 @app.route('/')
 def index():
     account = _build_account_view()
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
     watchlists = _build_watchlists_view()
+    recommendations = _build_recommendations_view()
     return render_template(
         'index.html',
         account=account,
@@ -118,6 +239,7 @@ def index():
         portfolio_error=portfolio_error,
         portfolio_total=portfolio_total,
         watchlists=watchlists,
+        recommendations=recommendations,
     )
 
 

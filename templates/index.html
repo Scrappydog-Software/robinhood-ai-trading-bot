@@ -17,6 +17,47 @@
 </section>
 
 <section class="card">
+    <h2>Recommendations</h2>
+    {% if recommendations.error %}
+        <p class="error">Error loading recommendations: {{ recommendations.error }}</p>
+    {% elif not recommendations.available %}
+        <p class="muted">No recent recommendations. Start <code>python main.py</code> to populate this section.</p>
+    {% else %}
+        <p class="muted small">
+            Last cycle: {{ recommendations.timestamp }}
+            ({% if recommendations.market_open_at_cycle %}market open{% else %}after hours{% endif %})
+            {% if recommendations.stale %}
+                <span class="stale-badge">stale</span>
+            {% else %}
+                <span class="fresh-badge">fresh</span>
+            {% endif %}
+        </p>
+        {% if recommendations.rows|length == 0 %}
+            <p class="muted">No buy or sell signals this cycle. ({{ recommendations.hold_count }} hold decision{{ '' if recommendations.hold_count == 1 else 's' }} filtered out.)</p>
+        {% else %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Decision</th>
+                        <th>Quantity</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in recommendations.rows %}
+                        <tr class="{{ row.decision }}">
+                            <td><strong>{{ row.symbol }}</strong></td>
+                            <td>{{ row.decision }}</td>
+                            <td>{{ "%.6f"|format(row.quantity) }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+    {% endif %}
+</section>
+
+<section class="card">
     <h2>Portfolio</h2>
     {% if portfolio_error %}
         <p class="error">Error loading portfolio: {{ portfolio_error }}</p>
