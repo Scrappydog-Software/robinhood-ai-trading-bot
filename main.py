@@ -14,6 +14,7 @@ except NameError:
 
 from src.api import robinhood
 from src.api import claude
+from src import db
 from src.state import trading_state
 from src.utils import logger
 
@@ -146,7 +147,8 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
 #                  lets other consumers (debugging, future analytics) see them.
 #   - Errors:      any IO failure is logged and swallowed. A failed write must
 #                  not kill the trading loop.
-def write_last_decisions(decisions_data, market_open):
+def write_last_decisions(decisions_data, market_open,
+                         portfolio_overview=None, watchlist_overview=None):
     # Update in-process shared state so the web UI gets live data
     # without a disk round-trip.
     normalized = [
@@ -163,11 +165,44 @@ def write_last_decisions(decisions_data, market_open):
         market_open=bool(market_open),
     )
 
+    # Persist each decision to the stock_analysis table for historical tracking.
+    analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    all_overviews = {}
+    if portfolio_overview:
+        all_overviews.update(portfolio_overview)
+    if watchlist_overview:
+        all_overviews.update(watchlist_overview)
+
+    for d in (decisions_data or []):
+        symbol = d.get('symbol')
+        if not symbol:
+            continue
+        enrichment = all_overviews.get(symbol, {})
+        try:
+            db.insert_stock_analysis({
+                'symbol': symbol,
+                'analyzed_at': analyzed_at,
+                'decision': d.get('decision', ''),
+                'quantity': d.get('quantity'),
+                'rationale': d.get('rationale'),
+                'price': enrichment.get('current_price'),
+                'rsi': enrichment.get('rsi'),
+                'vwap': enrichment.get('vwap'),
+                'ma_50': enrichment.get('50_day_mavg_price'),
+                'ma_200': enrichment.get('200_day_mavg_price'),
+                'analyst_summary': json.dumps(enrichment.get('analyst_summary')) if enrichment.get('analyst_summary') else None,
+                'held_quantity': enrichment.get('my_quantity'),
+                'held_avg_price': enrichment.get('my_average_buy_price'),
+                'source': 'loop',
+            })
+        except Exception as e:
+            logger.error(f"Error inserting stock_analysis for {symbol}: {e}")
+
     # Also write to disk as a side-effect for debugging / external tools.
     try:
         os.makedirs('data', exist_ok=True)
         payload = {
-            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'timestamp': analyzed_at,
             'market_open': bool(market_open),
             'decisions': normalized,
         }
@@ -275,7 +310,9 @@ def trading_bot(market_open=None):
         logger.warning("No stocks to analyze, skipping AI-based decision-making...")
         # Still persist an empty decisions snapshot so the dashboard reflects
         # the most recent cycle rather than showing data from an earlier run.
-        write_last_decisions([], market_open)
+        write_last_decisions([], market_open,
+                             portfolio_overview=portfolio_overview,
+                             watchlist_overview=watchlist_overview)
         return {}
 
     decisions_data = []
@@ -294,7 +331,9 @@ def trading_bot(market_open=None):
     # We do this even when there are no actionable trades, so the dashboard
     # reflects "the bot ran a cycle and found nothing to do" rather than
     # showing stale recommendations from a previous cycle.
-    write_last_decisions(decisions_data, market_open)
+    write_last_decisions(decisions_data, market_open,
+                         portfolio_overview=portfolio_overview,
+                         watchlist_overview=watchlist_overview)
 
     if len(decisions_data) == 0:
         logger.info("No decisions to execute")

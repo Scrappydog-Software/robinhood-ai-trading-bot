@@ -13,7 +13,7 @@ import asyncio
 import json
 import os
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
@@ -43,6 +43,7 @@ except NameError:
 LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
+from src.api import claude
 from src.api import massive_client
 from src import db
 from src.state import trading_state
@@ -495,7 +496,148 @@ def api_stock_detail(symbol):
     ticker_row = db.get_ticker_by_symbol(symbol)
     result['ticker'] = ticker_row
 
+    # --- Historical data status ---
+    result['history_status'] = db.get_stock_history_status(symbol)
+
     return jsonify(result)
+
+
+@app.route('/api/stock/<symbol>/analyze', methods=['POST'])
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_stock_analyze(symbol):
+    """Run an on-demand AI analysis for a single stock.
+
+    Fetches enrichment data (price, RSI, VWAP, MAs, analyst ratings),
+    builds a prompt, gets an AI decision, and stores the result in the
+    stock_analysis table with source='on_demand'.
+
+    Returns the AI decision as JSON.
+    """
+    symbol = symbol.upper()
+    logger.info(f"WebUI: on-demand analysis requested for {symbol}")
+
+    try:
+        # Gather enrichment data the same way the trading loop does
+        stock_data = {}
+
+        # Check if the stock is in the portfolio
+        holdings = robinhood.get_portfolio_stocks()
+        if holdings and symbol in holdings:
+            stock_data = robinhood.extract_my_stocks_data(holdings[symbol])
+        else:
+            # Watchlist-style: try to get current price
+            try:
+                quote = robinhood.rh_run_with_retries(
+                    robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
+                )
+                if quote and isinstance(quote, list) and quote[0]:
+                    stock_data = {
+                        'current_price': round(float(quote[0]), 2),
+                        'my_quantity': 0,
+                        'my_average_buy_price': 0,
+                    }
+            except Exception:
+                pass
+
+        # Enrich with indicators
+        historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
+        historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
+        ratings_data = robinhood.get_ratings(symbol)
+        stock_data = robinhood.enrich_with_rsi(stock_data, historical_data_day, symbol)
+        stock_data = robinhood.enrich_with_vwap(stock_data, historical_data_day, symbol)
+        stock_data = robinhood.enrich_with_moving_averages(stock_data, historical_data_year, symbol)
+        stock_data = robinhood.enrich_with_analyst_ratings(stock_data, ratings_data)
+
+        # Build a single-stock AI prompt
+        prompt = (
+            f"Analyze the following stock and provide a buy, sell, or hold recommendation.\n\n"
+            f"**Stock Data:**\n```json\n{json.dumps({symbol: stock_data}, indent=1)}\n```\n\n"
+            f"**Response Format:**\nReturn a JSON array with one entry:\n"
+            f'[{{"symbol": "{symbol}", "decision": "<buy|sell|hold>", "quantity": <qty>, "rationale": "<why>"}}]\n\n'
+            f"Provide only the JSON output with no additional text."
+        )
+        ai_response = claude.make_ai_request(prompt)
+        decisions = claude.parse_ai_response(ai_response)
+
+        decision = decisions[0] if decisions else {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': 'No analysis available'}
+
+        # Store in stock_analysis with source='on_demand'
+        analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        analyst_summary = stock_data.get('analyst_summary')
+        try:
+            db.insert_stock_analysis({
+                'symbol': symbol,
+                'analyzed_at': analyzed_at,
+                'decision': decision.get('decision', ''),
+                'quantity': decision.get('quantity'),
+                'rationale': decision.get('rationale'),
+                'price': stock_data.get('current_price'),
+                'rsi': stock_data.get('rsi'),
+                'vwap': stock_data.get('vwap'),
+                'ma_50': stock_data.get('50_day_mavg_price'),
+                'ma_200': stock_data.get('200_day_mavg_price'),
+                'analyst_summary': json.dumps(analyst_summary) if analyst_summary else None,
+                'held_quantity': stock_data.get('my_quantity'),
+                'held_avg_price': stock_data.get('my_average_buy_price'),
+                'source': 'on_demand',
+            })
+        except Exception as e:
+            logger.error(f"WebUI: error storing on-demand analysis for {symbol}: {e}")
+
+        return jsonify({'ok': True, 'decision': decision})
+    except Exception as e:
+        logger.error(f"WebUI: error running on-demand analysis for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/load-history', methods=['POST'])
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_stock_load_history(symbol):
+    """Fetch 2 years of daily OHLCV aggregates from Massive API and store them.
+
+    Uses massive_client.get_client().get_aggs() to pull daily bars, then
+    persists via db.upsert_stock_history().
+
+    Returns JSON: {ok, bars_loaded, from_date, to_date}
+    """
+    symbol = symbol.upper()
+    logger.info(f"WebUI: loading 2-year history for {symbol}")
+
+    try:
+        today = datetime.now()
+        to_date = today.strftime('%Y-%m-%d')
+        from_date = (today - timedelta(days=730)).strftime('%Y-%m-%d')
+
+        client = massive_client.get_client()
+        aggs = client.get_aggs(symbol, 1, "day", from_date, to_date, limit=50000)
+
+        bars = []
+        for agg in aggs:
+            # Massive API returns Agg objects with timestamp in milliseconds
+            bar_date = datetime.fromtimestamp(agg.timestamp / 1000).strftime('%Y-%m-%d')
+            bars.append({
+                'bar_date': bar_date,
+                'open': getattr(agg, 'open', None),
+                'high': getattr(agg, 'high', None),
+                'low': getattr(agg, 'low', None),
+                'close': getattr(agg, 'close', None),
+                'volume': getattr(agg, 'volume', None),
+                'vwap': getattr(agg, 'vwap', None),
+                'transactions': getattr(agg, 'transactions', None),
+            })
+
+        bars_loaded = db.upsert_stock_history(symbol, bars)
+        logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol} ({from_date} to {to_date})")
+
+        return jsonify({
+            'ok': True,
+            'bars_loaded': bars_loaded,
+            'from_date': from_date,
+            'to_date': to_date,
+        })
+    except Exception as e:
+        logger.error(f"WebUI: error loading history for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/loop/start', methods=['POST'])

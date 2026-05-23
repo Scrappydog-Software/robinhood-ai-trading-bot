@@ -143,7 +143,59 @@
             }
             html += '</div>';
 
+            // Historical Data
+            html += '<div class="modal-section"><h3>Historical Data</h3>';
+            if (data.history_status && data.history_status.has_data) {
+                html += '<dl class="kv">';
+                html += '<dt>Bars</dt><dd>' + esc(data.history_status.bar_count) + '</dd>';
+                html += '<dt>From</dt><dd>' + esc(data.history_status.earliest_date) + '</dd>';
+                html += '<dt>To</dt><dd>' + esc(data.history_status.latest_date) + '</dd>';
+                html += '</dl>';
+            } else {
+                html += '<p class="muted">No historical data loaded.</p>';
+            }
+            html += '<div style="margin-top:8px;">';
+            html += '<button class="btn btn-sm" id="btn-load-history" data-symbol="' + esc(data.symbol) + '">';
+            html += 'Load 2-Year History</button>';
+            html += '<span id="history-status" class="muted small" style="margin-left:8px;"></span>';
+            html += '</div>';
+            html += '</div>';
+
             modalBody.innerHTML = html;
+
+            // Bind the load-history button
+            var btnLoadHistory = document.getElementById('btn-load-history');
+            if (btnLoadHistory) {
+                btnLoadHistory.addEventListener('click', function() {
+                    var sym = this.getAttribute('data-symbol');
+                    var statusEl = document.getElementById('history-status');
+                    this.disabled = true;
+                    this.textContent = 'Loading...';
+                    statusEl.textContent = '';
+
+                    fetch('/api/stock/' + encodeURIComponent(sym) + '/load-history', { method: 'POST' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(resp) {
+                            if (resp.ok) {
+                                statusEl.textContent = resp.bars_loaded + ' bars loaded (' + resp.from_date + ' to ' + resp.to_date + ')';
+                                statusEl.style.color = 'var(--success)';
+                                btnLoadHistory.textContent = 'Load 2-Year History';
+                                btnLoadHistory.disabled = false;
+                            } else {
+                                statusEl.textContent = 'Error: ' + (resp.error || 'unknown');
+                                statusEl.style.color = 'var(--danger)';
+                                btnLoadHistory.textContent = 'Load 2-Year History';
+                                btnLoadHistory.disabled = false;
+                            }
+                        })
+                        .catch(function(err) {
+                            statusEl.textContent = 'Error: ' + err;
+                            statusEl.style.color = 'var(--danger)';
+                            btnLoadHistory.textContent = 'Load 2-Year History';
+                            btnLoadHistory.disabled = false;
+                        });
+                });
+            }
         }
 
         closeBtn.addEventListener('click', closeModal);
