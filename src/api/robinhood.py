@@ -1,6 +1,6 @@
 import robin_stocks.robinhood as rh
 import robin_stocks.urls as rh_urls
-from robin_stocks.robinhood.helper import request_post
+from robin_stocks.robinhood.helper import request_post, SESSION, update_session
 import time
 from datetime import datetime
 from pytz import timezone
@@ -240,23 +240,45 @@ def get_watchlist_stocks(name):
 
 # Create a new watchlist by name (uses undocumented Robinhood endpoint)
 def create_watchlist(name):
-    """Create a new watchlist by name. Uses undocumented Robinhood endpoint.
+    """Create a new watchlist via the undocumented Robinhood `/midlands/lists/` POST endpoint.
 
-    Returns dict: {'ok': bool, 'name': str, 'error': str|None}
+    `/midlands/lists/default/` (which a GET returns the user's watchlists) does NOT
+    accept POST — it returns 405. The actual create endpoint is `/midlands/lists/`
+    with body `{"display_name": <name>, "list_type": "watchlist"}` — discovered by
+    probing in 2026-05.
+
+    We call SESSION.post directly rather than robin_stocks's `request_post` because
+    `request_post` swallows the HTTP status + body, returning None on any error and
+    making diagnosis impossible.
+
+    Returns dict: {'ok': bool, 'name': str, 'id': str|None, 'error': str|None}
     """
+    url = "https://api.robinhood.com/midlands/lists/"
+    payload = {"display_name": name, "list_type": "watchlist"}
     try:
-        url = "https://api.robinhood.com/midlands/lists/default/"
-        payload = {"name": name, "type": "watchlist"}
-        # Note: robin_stocks's request_post takes payload as a dict; json=True for JSON body
-        resp = request_post(url, payload, json=True)
-        if resp and isinstance(resp, dict) and ('id' in resp or 'display_name' in resp):
-            return {'ok': True, 'name': name, 'error': None}
-        # If we got a dict with an 'error' or 'detail' key, surface it
-        if isinstance(resp, dict) and 'detail' in resp:
-            return {'ok': False, 'name': name, 'error': resp['detail']}
-        return {'ok': False, 'name': name, 'error': f'Unexpected response: {resp}'}
+        update_session('Content-Type', 'application/json')
+        res = SESSION.post(url, json=payload, timeout=16)
+        if res.status_code in (200, 201):
+            try:
+                data = res.json()
+                return {'ok': True, 'name': name, 'id': data.get('id'), 'error': None}
+            except ValueError:
+                return {'ok': True, 'name': name, 'id': None, 'error': None}
+        # Non-2xx: try to extract a useful error message from the response body
+        try:
+            body = res.json()
+            if isinstance(body, dict) and 'detail' in body:
+                err = body['detail']
+            elif isinstance(body, dict):
+                # field-level validation errors come back as {"field": ["msg"]}
+                err = "; ".join(f"{k}: {v}" for k, v in body.items())
+            else:
+                err = str(body)
+        except ValueError:
+            err = res.text.strip() or f'HTTP {res.status_code}'
+        return {'ok': False, 'name': name, 'id': None, 'error': f'HTTP {res.status_code}: {err}'}
     except Exception as e:
-        return {'ok': False, 'name': name, 'error': str(e)}
+        return {'ok': False, 'name': name, 'id': None, 'error': str(e)}
 
 
 # Add a stock to an existing watchlist by name
