@@ -258,6 +258,9 @@ def sell_stock(symbol, quantity):
     if MODE == "demo":
         return {"id": "demo"}
 
+    if not is_market_open():
+        return {"id": "market_closed"}
+
     if MODE == "manual":
         confirm = input(f"Confirm sell for {symbol} of {quantity}? (yes/no): ")
         if confirm.lower() != "yes":
@@ -273,6 +276,9 @@ def sell_stock(symbol, quantity):
 def buy_stock(symbol, quantity):
     if MODE == "demo":
         return {"id": "demo"}
+
+    if not is_market_open():
+        return {"id": "market_closed"}
 
     if MODE == "manual":
         confirm = input(f"Confirm buy for {symbol} of {quantity}? (yes/no): ")
