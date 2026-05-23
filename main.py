@@ -1,6 +1,7 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import json
+import os
 import asyncio
 
 from config import *
@@ -128,6 +129,44 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
     return filtered_decisions
 
 
+# Persist the latest filtered AI decisions to disk for the web UI to consume.
+#
+# Contract (see also webui._build_recommendations_view):
+#   - File:        data/last-decisions.json
+#   - Atomicity:   write to .tmp first, then os.replace -> the webui never sees
+#                  a half-written file (os.replace is atomic on POSIX + Windows
+#                  when source/dest are on the same filesystem, which they are
+#                  here because both live under ./data/).
+#   - Shape:       {timestamp: ISO8601-Z, market_open: bool, decisions: [...]}
+#   - Decisions:   the FULL filtered list including 'hold' entries. Holds are
+#                  filtered out at READ time by the webui — keeping holds on disk
+#                  lets other consumers (debugging, future analytics) see them.
+#   - Errors:      any IO failure is logged and swallowed. A failed write must
+#                  not kill the trading loop.
+def write_last_decisions(decisions_data, market_open):
+    try:
+        os.makedirs('data', exist_ok=True)
+        payload = {
+            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'market_open': bool(market_open),
+            'decisions': [
+                {
+                    'symbol': d.get('symbol'),
+                    'decision': d.get('decision'),
+                    'quantity': d.get('quantity', 0),
+                }
+                for d in (decisions_data or [])
+            ],
+        }
+        final_path = os.path.join('data', 'last-decisions.json')
+        tmp_path = final_path + '.tmp'
+        with open(tmp_path, 'w') as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, final_path)
+    except Exception as e:
+        logger.error(f"Error writing last-decisions.json: {e}")
+
+
 # Limit watchlist stocks based on the current week number
 def limit_watchlist_stocks(watchlist_stocks, limit):
     if len(watchlist_stocks) <= limit:
@@ -151,7 +190,13 @@ def limit_watchlist_stocks(watchlist_stocks, limit):
 
 
 # Main trading bot function
-def trading_bot():
+def trading_bot(market_open=None):
+    # market_open is passed in from main() to avoid a second is_market_open()
+    # round-trip per cycle. None signals "caller didn't tell us" — we fall back
+    # to a fresh check so trading_bot() stays callable on its own (tests, ad-hoc).
+    if market_open is None:
+        market_open = robinhood.is_market_open()
+
     logger.info("Getting account info...")
     account_info = robinhood.get_account_info()
 
@@ -215,6 +260,9 @@ def trading_bot():
 
     if len(portfolio_overview) == 0 and len(watchlist_overview) == 0:
         logger.warning("No stocks to analyze, skipping AI-based decision-making...")
+        # Still persist an empty decisions snapshot so the dashboard reflects
+        # the most recent cycle rather than showing data from an earlier run.
+        write_last_decisions([], market_open)
         return {}
 
     decisions_data = []
@@ -228,6 +276,12 @@ def trading_bot():
 
     logger.info("Filtering AI hallucinations...")
     decisions_data = filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overview, decisions_data)
+
+    # Persist the FULL filtered list (incl. holds) for the web UI dashboard.
+    # We do this even when there are no actionable trades, so the dashboard
+    # reflects "the bot ran a cycle and found nothing to do" rather than
+    # showing stale recommendations from a previous cycle.
+    write_last_decisions(decisions_data, market_open)
 
     if len(decisions_data) == 0:
         logger.info("No decisions to execute")
@@ -317,7 +371,7 @@ async def main():
                 run_interval_seconds = AFTER_HOURS_INTERVAL_SECONDS
                 logger.info(f"Market is closed, running analysis only (no order placement) in {MODE} mode...")
 
-            trading_results = trading_bot()
+            trading_results = trading_bot(market_open=market_open)
 
             sold_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "sell" and result['result'] == "success"]
             bought_stocks = [f"{result['symbol']} ({result['quantity']})" for result in trading_results.values() if result['decision'] == "buy" and result['result'] == "success"]
