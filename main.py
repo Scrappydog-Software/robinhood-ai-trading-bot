@@ -73,12 +73,18 @@ def make_ai_decisions(account_info, portfolio_overview, watchlist_overview):
         "]\n"
         "```\n"
         "- <symbol>: Stock symbol.\n"
-        "- <decision>: One of `buy`, `sell`, or `hold`.\n"
+        "- <decision>: One of `strong_buy`, `buy`, `hold`, `sell`, or `strong_sell`.\n"
+        "  - `strong_buy`: Strong conviction — multiple indicators align for significant upside potential.\n"
+        "  - `buy`: Moderate conviction — shows potential for appreciation but with less certainty.\n"
+        "  - `hold`: No action recommended.\n"
+        "  - `sell`: Moderate conviction — indicators suggest downside risk or better opportunities elsewhere.\n"
+        "  - `strong_sell`: Strong conviction — multiple indicators align for significant downside risk.\n"
         "- <quantity>: Recommended transaction quantity.\n"
         "- <rationale>: A brief explanation of WHY this decision was made, referencing specific data points (e.g. RSI, VWAP, moving averages, analyst ratings) that influenced the decision.\n\n"
         "**Instructions:**\n"
         "- Provide only the JSON output with no additional text.\n"
-        "- Return an empty array if no actions are necessary."
+        "- Return a decision for EVERY stock in the data — use `hold` with quantity 0 for stocks that should not be traded.\n"
+        "- Do NOT omit stocks — every symbol must appear in the response."
     )
     logger.debug(f"AI making-decisions prompt:{chr(10)}{ai_prompt}")
     ai_response = claude.make_ai_request(ai_prompt)
@@ -101,14 +107,14 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
             logger.debug(f"Filtering out {decision_type} decision for {symbol} - in TRADE_EXCEPTIONS")
             continue
 
-        # Filter sell decisions with 0 quantity
-        if decision_type == "sell" and quantity == 0:
-            logger.debug(f"Filtering out sell decision for {symbol} with 0 quantity")
+        # Filter sell/strong_sell decisions with 0 quantity
+        if decision_type in ("sell", "strong_sell") and quantity == 0:
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} with 0 quantity")
             continue
 
-        # Filter buy decisions with 0 quantity
-        if decision_type == "buy" and quantity == 0:
-            logger.debug(f"Filtering out buy decision for {symbol} with 0 quantity")
+        # Filter buy/strong_buy decisions with 0 quantity
+        if decision_type in ("buy", "strong_buy") and quantity == 0:
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} with 0 quantity")
             continue
 
         # Get stock data from either portfolio or watchlist
@@ -117,14 +123,14 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
             logger.debug(f"Filtering out decision for {symbol} - not found in portfolio or watchlist")
             continue
 
-        # Filter buy decisions with is_buy_pdt_restricted == True
-        if decision_type == "buy" and stock_data.get("is_buy_pdt_restricted", False):
-            logger.debug(f"Filtering out buy decision for {symbol} due to PDT restriction")
+        # Filter buy/strong_buy decisions with is_buy_pdt_restricted == True
+        if decision_type in ("buy", "strong_buy") and stock_data.get("is_buy_pdt_restricted", False):
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")
             continue
 
-        # Filter sell decisions with is_sell_pdt_restricted == True
-        if decision_type == "sell" and stock_data.get("is_sell_pdt_restricted", False):
-            logger.debug(f"Filtering out sell decision for {symbol} due to PDT restriction")
+        # Filter sell/strong_sell decisions with is_sell_pdt_restricted == True
+        if decision_type in ("sell", "strong_sell") and stock_data.get("is_sell_pdt_restricted", False):
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")
             continue
 
         filtered_decisions.append(decision)
@@ -215,27 +221,6 @@ def write_last_decisions(decisions_data, market_open,
         logger.error(f"Error writing last-decisions.json: {e}")
 
 
-# Limit watchlist stocks based on the current week number
-def limit_watchlist_stocks(watchlist_stocks, limit):
-    if len(watchlist_stocks) <= limit:
-        return watchlist_stocks
-
-    # Sort watchlist stocks by symbol
-    watchlist_stocks = sorted(watchlist_stocks, key=lambda x: x['symbol'])
-
-    # Get the current month number
-    current_month = datetime.now().month
-
-    # Calculate the number of parts
-    num_parts = (len(watchlist_stocks) + limit - 1) // limit  # Ceiling division
-
-    # Determine the part to return based on the current month number
-    part_index = (current_month - 1) % num_parts
-    start_index = part_index * limit
-    end_index = min(start_index + limit, len(watchlist_stocks))
-
-    return watchlist_stocks[start_index:end_index]
-
 
 # Main trading bot function
 def trading_bot(market_open=None):
@@ -272,22 +257,26 @@ def trading_bot(market_open=None):
         portfolio_overview[symbol] = robinhood.enrich_with_analyst_ratings(portfolio_overview[symbol], ratings_data)
         portfolio_overview[symbol] = robinhood.enrich_with_pdt_restrictions(portfolio_overview[symbol], symbol)
 
-    logger.info("Getting watchlist stocks...")
+    logger.info("Getting all watchlist stocks from Robinhood...")
     watchlist_stocks = []
-    for watchlist_name in WATCHLIST_NAMES:
-        try:
-            watchlist_stocks.extend(robinhood.get_watchlist_stocks(watchlist_name))
-            watchlist_stocks = [dict(t) for t in {tuple(d.items()) for d in watchlist_stocks}]
-        except Exception as e:
-            logger.error(f"Error getting watchlist stocks for {watchlist_name}: {e}")
+    try:
+        all_lists = robinhood.get_all_watchlists()
+        watchlist_names = [w.get('display_name') for w in all_lists if isinstance(w, dict) and w.get('display_name')]
+        logger.info(f"Found {len(watchlist_names)} watchlists: {', '.join(watchlist_names)}")
+        for watchlist_name in watchlist_names:
+            try:
+                stocks = robinhood.get_watchlist_stocks(watchlist_name)
+                watchlist_stocks.extend(stocks)
+                watchlist_stocks = [dict(t) for t in {tuple(d.items()) for d in watchlist_stocks}]
+            except Exception as e:
+                logger.error(f"Error getting watchlist stocks for {watchlist_name}: {e}")
+    except Exception as e:
+        logger.error(f"Error fetching watchlists from Robinhood: {e}")
 
     logger.debug(f"Watchlist stocks total: {len(watchlist_stocks)}")
 
     watchlist_overview = {}
     if len(watchlist_stocks) > 0:
-        logger.debug(f"Limiting watchlist stocks to overview limit of {WATCHLIST_OVERVIEW_LIMIT}...")
-        watchlist_stocks = limit_watchlist_stocks(watchlist_stocks, WATCHLIST_OVERVIEW_LIMIT)
-
         logger.debug(f"Removing portfolio stocks from watchlist...")
         watchlist_stocks = [stock for stock in watchlist_stocks if stock['symbol'] not in portfolio_stocks.keys()]
 
@@ -296,15 +285,19 @@ def trading_bot(market_open=None):
         logger.info("Prepare watchlist overview for AI analysis...")
         for stock_data in watchlist_stocks:
             symbol = stock_data['symbol']
-            historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-            historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-            ratings_data = robinhood.get_ratings(symbol)
-            watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
-            watchlist_overview[symbol] = robinhood.enrich_with_rsi(watchlist_overview[symbol], historical_data_day, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_vwap(watchlist_overview[symbol], historical_data_day, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_moving_averages(watchlist_overview[symbol], historical_data_year, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_analyst_ratings(watchlist_overview[symbol], ratings_data)
-            watchlist_overview[symbol] = robinhood.enrich_with_pdt_restrictions(watchlist_overview[symbol], symbol)
+            try:
+                historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
+                historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
+                ratings_data = robinhood.get_ratings(symbol)
+                watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
+                watchlist_overview[symbol] = robinhood.enrich_with_rsi(watchlist_overview[symbol], historical_data_day, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_vwap(watchlist_overview[symbol], historical_data_day, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_moving_averages(watchlist_overview[symbol], historical_data_year, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_analyst_ratings(watchlist_overview[symbol], ratings_data)
+                watchlist_overview[symbol] = robinhood.enrich_with_pdt_restrictions(watchlist_overview[symbol], symbol)
+            except Exception as e:
+                logger.error(f"Skipping watchlist stock {symbol}: {e}")
+                continue
 
     if len(portfolio_overview) == 0 and len(watchlist_overview) == 0:
         logger.warning("No stocks to analyze, skipping AI-based decision-making...")
@@ -347,7 +340,7 @@ def trading_bot(market_open=None):
         quantity = decision_data['quantity']
         logger.info(f"{symbol} > Decision: {decision} of {quantity}")
 
-        if decision == "sell":
+        if decision in ("sell", "strong_sell"):
             try:
                 sell_resp = robinhood.sell_stock(symbol, quantity)
                 if sell_resp and 'id' in sell_resp:
@@ -372,7 +365,7 @@ def trading_bot(market_open=None):
                 trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "error", "details": str(e)}
                 logger.error(f"{symbol} > Error selling: {e}")
 
-        if decision == "buy":
+        if decision in ("buy", "strong_buy"):
             try:
                 buy_resp = robinhood.buy_stock(symbol, quantity)
                 if buy_resp and 'id' in buy_resp:

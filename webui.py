@@ -12,6 +12,7 @@ URL:             http://127.0.0.1:5001
 import asyncio
 import json
 import os
+import time
 import warnings
 from datetime import datetime, timezone, timedelta
 
@@ -141,8 +142,7 @@ csrf = CSRFProtect(app)
 
 
 def _build_watchlists_view():
-    """Fetch ALL of the user's watchlists from Robinhood — not just the
-    ones in WATCHLIST_NAMES (which is the trading-bot's analysis subset).
+    """Fetch ALL of the user's watchlists from Robinhood.
 
     The dashboard is a UI for managing watchlists, so it should reflect
     Robinhood's actual state — including any list the user just created
@@ -212,7 +212,7 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
-def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle):
+def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle, portfolio_symbols=None):
     """Common logic to shape a decisions list into the template view dict.
 
     Used by both the in-process state path and the JSON file fallback.
@@ -247,30 +247,31 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
         stale = age_seconds > threshold
 
-    # Filter holds, count them for the "N holds filtered out" hint.
-    hold_count = 0
+    held = set(portfolio_symbols or [])
     rows = []
     for d in decisions:
         if not isinstance(d, dict):
             continue
         decision = d.get('decision')
+        symbol = d.get('symbol')
         if decision == 'hold':
-            hold_count += 1
             continue
-        if decision not in ('buy', 'sell'):
+        if decision in ('sell', 'strong_sell') and symbol not in held:
+            continue
+        if decision not in ('strong_buy', 'buy', 'sell', 'strong_sell'):
             continue
         try:
             quantity = float(d.get('quantity', 0) or 0)
         except (TypeError, ValueError):
             quantity = 0.0
         rows.append({
-            'symbol': d.get('symbol'),
+            'symbol': symbol,
             'decision': decision,
             'quantity': quantity,
         })
 
-    # Predictable order: buys first, then sells, then alphabetic by symbol.
-    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
+    order = {'strong_buy': 0, 'buy': 1, 'sell': 2, 'strong_sell': 3}
+    rows.sort(key=lambda r: (order.get(r['decision'], 4), r['symbol'] or ''))
 
     return {
         'available': True,
@@ -279,36 +280,17 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         'stale': stale,
         'market_open_at_cycle': bool(market_open_at_cycle) if market_open_at_cycle is not None else None,
         'rows': rows,
-        'hold_count': hold_count,
+        'hold_count': 0,
         'error': None,
     }
 
 
-def _build_recommendations_view():
-    """Load the most recent cycle's filtered AI decisions and shape them
-    for the template.
+def _build_recommendations_view(portfolio_symbols=None):
+    """Load the most recent cycle's AI decisions, filtered for actionable items.
 
-    Reads from in-process shared state first (populated by the unified app's
-    trading loop). Falls back to data/last-decisions.json if shared state has
-    no decisions (backward compatibility when running webui.py standalone
-    alongside a separate main.py process).
-
-    Contract:
-      - no data            -> available=False, error=None (template says
-                              "no recent recommendations")
-      - malformed JSON     -> available=False, error=<msg>
-      - parsed OK          -> available=True, rows filtered to buy/sell only,
-                              sorted by (decision: buy<sell, then symbol asc).
-                              stale flag computed against RUN_INTERVAL or
-                              AFTER_HOURS_INTERVAL depending on whether the
-                              market was open at write time.
-      - hold-count         -> exposed separately so the template can render
-                              "N hold decisions filtered out" when the visible
-                              rows list is empty but the cycle did run.
-
-    Holds are filtered out HERE rather than at write time so other consumers
-    of data/last-decisions.json (debugging, future analytics) can still see
-    the model's full output.
+    Shows only buy recommendations and sell recommendations for stocks
+    currently in the portfolio. Holds are excluded — they remain visible
+    in the Recommendation column of the Portfolio and Watchlist tables.
     """
     empty = {
         'available': False,
@@ -328,6 +310,7 @@ def _build_recommendations_view():
             state['decisions'],
             state['last_cycle_time'],
             state['market_open'],
+            portfolio_symbols=portfolio_symbols,
         )
 
     # Fall back to JSON file
@@ -347,6 +330,7 @@ def _build_recommendations_view():
         payload.get('decisions') or [],
         payload.get('timestamp'),
         payload.get('market_open'),
+        portfolio_symbols=portfolio_symbols,
     )
 
 
@@ -354,8 +338,9 @@ def _build_recommendations_view():
 def index():
     account = _build_account_view()
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
+    portfolio_symbols = [r['symbol'] for r in portfolio_rows]
     watchlists = _build_watchlists_view()
-    recommendations = _build_recommendations_view()
+    recommendations = _build_recommendations_view(portfolio_symbols=portfolio_symbols)
     decisions_map = _load_decisions_map()
     loop_status = trading_state.snapshot()
     return render_template(
@@ -503,63 +488,63 @@ def api_stock_detail(symbol):
 
 
 @app.route('/api/stock/<symbol>/analyze', methods=['POST'])
-@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+@csrf.exempt
 def api_stock_analyze(symbol):
-    """Run an on-demand AI analysis for a single stock.
+    """On-demand single-stock AI analysis with historical storage.
 
-    Fetches enrichment data (price, RSI, VWAP, MAs, analyst ratings),
-    builds a prompt, gets an AI decision, and stores the result in the
-    stock_analysis table with source='on_demand'.
-
-    Returns the AI decision as JSON.
+    Fetches enrichment data from Robinhood, sends to Claude for a
+    buy/sell/hold decision with rationale, stores the result in
+    stock_analysis table, and returns the decision.
     """
     symbol = symbol.upper()
     logger.info(f"WebUI: on-demand analysis requested for {symbol}")
-
     try:
-        # Gather enrichment data the same way the trading loop does
-        stock_data = {}
+        account_info = robinhood.get_account_info()
 
-        # Check if the stock is in the portfolio
+        logger.info(f"WebUI: fetching Robinhood data for {symbol}...")
+        historical_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
+        historical_year = robinhood.get_historical_data(symbol, interval="day", span="year")
+        ratings_data = robinhood.get_ratings(symbol)
+
         holdings = robinhood.get_portfolio_stocks()
         if holdings and symbol in holdings:
             stock_data = robinhood.extract_my_stocks_data(holdings[symbol])
         else:
-            # Watchlist-style: try to get current price
-            try:
-                quote = robinhood.rh_run_with_retries(
-                    robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
-                )
-                if quote and isinstance(quote, list) and quote[0]:
-                    stock_data = {
-                        'current_price': round(float(quote[0]), 2),
-                        'my_quantity': 0,
-                        'my_average_buy_price': 0,
-                    }
-            except Exception:
-                pass
+            price_list = robinhood.rh_run_with_retries(
+                robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
+            )
+            price = float(price_list[0]) if price_list and price_list[0] else 0
+            stock_data = {
+                'current_price': round(price, 2),
+                'my_quantity': 0,
+                'my_average_buy_price': 0,
+            }
 
-        # Enrich with indicators
-        historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-        historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-        ratings_data = robinhood.get_ratings(symbol)
-        stock_data = robinhood.enrich_with_rsi(stock_data, historical_data_day, symbol)
-        stock_data = robinhood.enrich_with_vwap(stock_data, historical_data_day, symbol)
-        stock_data = robinhood.enrich_with_moving_averages(stock_data, historical_data_year, symbol)
+        stock_data = robinhood.enrich_with_rsi(stock_data, historical_day, symbol)
+        stock_data = robinhood.enrich_with_vwap(stock_data, historical_day, symbol)
+        stock_data = robinhood.enrich_with_moving_averages(stock_data, historical_year, symbol)
         stock_data = robinhood.enrich_with_analyst_ratings(stock_data, ratings_data)
+        logger.info(f"WebUI: Robinhood data enriched for {symbol}, sending to Claude...")
 
-        # Build a single-stock AI prompt
         prompt = (
-            f"Analyze the following stock and provide a buy, sell, or hold recommendation.\n\n"
+            f"Analyze this single stock and provide a buy, sell, or hold recommendation.\n\n"
             f"**Stock Data:**\n```json\n{json.dumps({symbol: stock_data}, indent=1)}\n```\n\n"
-            f"**Response Format:**\nReturn a JSON array with one entry:\n"
-            f'[{{"symbol": "{symbol}", "decision": "<buy|sell|hold>", "quantity": <qty>, "rationale": "<why>"}}]\n\n'
+            f"**Account Buying Power:** ${account_info.get('buying_power', 'unknown')}\n\n"
+            f"**Response Format:**\n"
+            f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<strong_buy|buy|hold|sell|strong_sell>", '
+            f'"quantity": <number>, "rationale": "<detailed explanation referencing RSI, VWAP, '
+            f'moving averages, analyst ratings, and any other relevant data points>"}}\n\n'
             f"Provide only the JSON output with no additional text."
         )
-        ai_response = claude.make_ai_request(prompt)
-        decisions = claude.parse_ai_response(ai_response)
 
-        decision = decisions[0] if decisions else {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': 'No analysis available'}
+        ai_response = claude.make_ai_request(prompt)
+        logger.info(f"WebUI: Claude response received for {symbol}, parsing...")
+        result = claude.parse_ai_response(ai_response)
+
+        if isinstance(result, list) and len(result) > 0:
+            result = result[0]
+        elif not isinstance(result, dict):
+            result = {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': str(result)}
 
         # Store in stock_analysis with source='on_demand'
         analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -568,9 +553,9 @@ def api_stock_analyze(symbol):
             db.insert_stock_analysis({
                 'symbol': symbol,
                 'analyzed_at': analyzed_at,
-                'decision': decision.get('decision', ''),
-                'quantity': decision.get('quantity'),
-                'rationale': decision.get('rationale'),
+                'decision': result.get('decision', ''),
+                'quantity': result.get('quantity'),
+                'rationale': result.get('rationale'),
                 'price': stock_data.get('current_price'),
                 'rsi': stock_data.get('rsi'),
                 'vwap': stock_data.get('vwap'),
@@ -584,22 +569,17 @@ def api_stock_analyze(symbol):
         except Exception as e:
             logger.error(f"WebUI: error storing on-demand analysis for {symbol}: {e}")
 
-        return jsonify({'ok': True, 'decision': decision})
+        logger.info(f"WebUI: analysis complete for {symbol}: {result.get('decision', '?')}")
+        return jsonify({'ok': True, 'analysis': result})
     except Exception as e:
-        logger.error(f"WebUI: error running on-demand analysis for {symbol}: {e}")
+        logger.error(f"WebUI: on-demand analysis error for {symbol}: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/stock/<symbol>/load-history', methods=['POST'])
-@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+@csrf.exempt
 def api_stock_load_history(symbol):
-    """Fetch 2 years of daily OHLCV aggregates from Massive API and store them.
-
-    Uses massive_client.get_client().get_aggs() to pull daily bars, then
-    persists via db.upsert_stock_history().
-
-    Returns JSON: {ok, bars_loaded, from_date, to_date}
-    """
+    """Fetch 2 years of daily OHLCV aggregates from Massive API and store them."""
     symbol = symbol.upper()
     logger.info(f"WebUI: loading 2-year history for {symbol}")
 
@@ -613,7 +593,6 @@ def api_stock_load_history(symbol):
 
         bars = []
         for agg in aggs:
-            # Massive API returns Agg objects with timestamp in milliseconds
             bar_date = datetime.fromtimestamp(agg.timestamp / 1000).strftime('%Y-%m-%d')
             bars.append({
                 'bar_date': bar_date,
@@ -748,8 +727,10 @@ def api_tickers_load():
             'source_feed':          getattr(t, 'source_feed', None),
         }
 
+    RATE_LIMIT_DELAY = 13  # seconds between pages — Massive API allows 5 calls/min
+
     try:
-        tickers_iter = massive_client.fetch_all_tickers()
+        tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
         batch = []
         total = 0
         for t in tickers_iter:
@@ -757,7 +738,9 @@ def api_tickers_load():
             if len(batch) >= BATCH_SIZE:
                 count = db.upsert_tickers(batch)
                 total += count
+                logger.info(f"WebUI: loaded {total} tickers so far, sleeping {RATE_LIMIT_DELAY}s for rate limit...")
                 batch = []
+                time.sleep(RATE_LIMIT_DELAY)
         if batch:
             count = db.upsert_tickers(batch)
             total += count

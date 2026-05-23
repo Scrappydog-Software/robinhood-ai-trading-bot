@@ -67,7 +67,7 @@
             {% endif %}
         </p>
         {% if recommendations.rows|length == 0 %}
-            <p class="muted">No buy or sell signals this cycle. ({{ recommendations.hold_count }} hold decision{{ '' if recommendations.hold_count == 1 else 's' }} filtered out.)</p>
+            <p class="muted">No recommendations this cycle.</p>
         {% else %}
             <table>
                 <thead>

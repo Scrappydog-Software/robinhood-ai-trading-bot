@@ -123,6 +123,7 @@
             } else {
                 html += '<p class="muted">No AI analysis available for this stock.</p>';
             }
+            html += '<button class="btn btn-analyze" onclick="requestAnalysis(\'' + esc(data.symbol).replace(/'/g, "\\'") + '\')">Request Analysis</button>';
             html += '</div>';
 
             // Ticker Details
@@ -197,6 +198,43 @@
                 });
             }
         }
+
+        window.requestAnalysis = function(symbol) {
+            var btn = document.querySelector('.btn-analyze');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span> Analyzing with Claude&hellip;';
+            }
+
+            fetch('/api/stock/' + encodeURIComponent(symbol) + '/analyze', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.ok && data.analysis) {
+                        var a = data.analysis;
+                        var dec = a.decision || 'unknown';
+                        var cls = 'rec-' + dec.toLowerCase();
+                        var html = '<dl class="kv">';
+                        html += '<dt>Decision</dt><dd class="rec ' + cls + '">' + esc(dec) + '</dd>';
+                        html += '<dt>Quantity</dt><dd>' + esc(a.quantity) + '</dd>';
+                        html += '</dl>';
+                        if (a.rationale) {
+                            html += '<div class="modal-rationale"><strong>Rationale:</strong> ' + esc(a.rationale) + '</div>';
+                        }
+                        var section = document.querySelector('.modal-section:nth-child(3)');
+                        if (section) {
+                            section.innerHTML = '<h3>AI Analysis <span class="fresh-badge">fresh</span></h3>' + html +
+                                '<button class="btn btn-analyze" onclick="requestAnalysis(\'' + esc(symbol).replace(/\x27/g, "\\'") + '\')">Re-analyze</button>';
+                        }
+                    } else {
+                        if (btn) { btn.disabled = false; btn.textContent = 'Request Analysis'; }
+                        alert('Analysis failed: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(function(err) {
+                    if (btn) { btn.disabled = false; btn.textContent = 'Request Analysis'; }
+                    alert('Error: ' + err);
+                });
+        };
 
         closeBtn.addEventListener('click', closeModal);
         backdrop.addEventListener('click', function(e) {
