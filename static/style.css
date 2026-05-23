@@ -127,6 +127,14 @@ tr.sell td:nth-child(2) {
     letter-spacing: 0.5px;
     font-weight: 600;
 }
+tr.hold td:nth-child(2) {
+    color: var(--text-muted);
+    border-left: 2px solid var(--text-muted);
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
 
 /* Recommendation cells in Portfolio & Watchlist tables — reuse the same
    typographic treatment as the Recommendations section's decision column. */

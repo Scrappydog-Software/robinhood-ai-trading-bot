@@ -247,17 +247,12 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
         stale = age_seconds > threshold
 
-    # Filter holds, count them for the "N holds filtered out" hint.
-    hold_count = 0
     rows = []
     for d in decisions:
         if not isinstance(d, dict):
             continue
         decision = d.get('decision')
-        if decision == 'hold':
-            hold_count += 1
-            continue
-        if decision not in ('buy', 'sell'):
+        if decision not in ('buy', 'sell', 'hold'):
             continue
         try:
             quantity = float(d.get('quantity', 0) or 0)
@@ -269,8 +264,8 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
             'quantity': quantity,
         })
 
-    # Predictable order: buys first, then sells, then alphabetic by symbol.
-    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
+    order = {'buy': 0, 'sell': 1, 'hold': 2}
+    rows.sort(key=lambda r: (order.get(r['decision'], 3), r['symbol'] or ''))
 
     return {
         'available': True,
@@ -279,7 +274,7 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         'stale': stale,
         'market_open_at_cycle': bool(market_open_at_cycle) if market_open_at_cycle is not None else None,
         'rows': rows,
-        'hold_count': hold_count,
+        'hold_count': 0,
         'error': None,
     }
 
