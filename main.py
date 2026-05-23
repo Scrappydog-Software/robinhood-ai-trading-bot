@@ -72,7 +72,12 @@ def make_ai_decisions(account_info, portfolio_overview, watchlist_overview):
         "]\n"
         "```\n"
         "- <symbol>: Stock symbol.\n"
-        "- <decision>: One of `buy`, `sell`, or `hold`.\n"
+        "- <decision>: One of `strong_buy`, `buy`, `hold`, `sell`, or `strong_sell`.\n"
+        "  - `strong_buy`: Strong conviction — multiple indicators align for significant upside potential.\n"
+        "  - `buy`: Moderate conviction — shows potential for appreciation but with less certainty.\n"
+        "  - `hold`: No action recommended.\n"
+        "  - `sell`: Moderate conviction — indicators suggest downside risk or better opportunities elsewhere.\n"
+        "  - `strong_sell`: Strong conviction — multiple indicators align for significant downside risk.\n"
         "- <quantity>: Recommended transaction quantity.\n"
         "- <rationale>: A brief explanation of WHY this decision was made, referencing specific data points (e.g. RSI, VWAP, moving averages, analyst ratings) that influenced the decision.\n\n"
         "**Instructions:**\n"
@@ -101,14 +106,14 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
             logger.debug(f"Filtering out {decision_type} decision for {symbol} - in TRADE_EXCEPTIONS")
             continue
 
-        # Filter sell decisions with 0 quantity
-        if decision_type == "sell" and quantity == 0:
-            logger.debug(f"Filtering out sell decision for {symbol} with 0 quantity")
+        # Filter sell/strong_sell decisions with 0 quantity
+        if decision_type in ("sell", "strong_sell") and quantity == 0:
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} with 0 quantity")
             continue
 
-        # Filter buy decisions with 0 quantity
-        if decision_type == "buy" and quantity == 0:
-            logger.debug(f"Filtering out buy decision for {symbol} with 0 quantity")
+        # Filter buy/strong_buy decisions with 0 quantity
+        if decision_type in ("buy", "strong_buy") and quantity == 0:
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} with 0 quantity")
             continue
 
         # Get stock data from either portfolio or watchlist
@@ -117,14 +122,14 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
             logger.debug(f"Filtering out decision for {symbol} - not found in portfolio or watchlist")
             continue
 
-        # Filter buy decisions with is_buy_pdt_restricted == True
-        if decision_type == "buy" and stock_data.get("is_buy_pdt_restricted", False):
-            logger.debug(f"Filtering out buy decision for {symbol} due to PDT restriction")
+        # Filter buy/strong_buy decisions with is_buy_pdt_restricted == True
+        if decision_type in ("buy", "strong_buy") and stock_data.get("is_buy_pdt_restricted", False):
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")
             continue
 
-        # Filter sell decisions with is_sell_pdt_restricted == True
-        if decision_type == "sell" and stock_data.get("is_sell_pdt_restricted", False):
-            logger.debug(f"Filtering out sell decision for {symbol} due to PDT restriction")
+        # Filter sell/strong_sell decisions with is_sell_pdt_restricted == True
+        if decision_type in ("sell", "strong_sell") and stock_data.get("is_sell_pdt_restricted", False):
+            logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")
             continue
 
         filtered_decisions.append(decision)
@@ -296,7 +301,7 @@ def trading_bot(market_open=None):
         quantity = decision_data['quantity']
         logger.info(f"{symbol} > Decision: {decision} of {quantity}")
 
-        if decision == "sell":
+        if decision in ("sell", "strong_sell"):
             try:
                 sell_resp = robinhood.sell_stock(symbol, quantity)
                 if sell_resp and 'id' in sell_resp:
@@ -321,7 +326,7 @@ def trading_bot(market_open=None):
                 trading_results[symbol] = {"symbol": symbol, "quantity": quantity, "decision": "sell", "result": "error", "details": str(e)}
                 logger.error(f"{symbol} > Error selling: {e}")
 
-        if decision == "buy":
+        if decision in ("buy", "strong_buy"):
             try:
                 buy_resp = robinhood.buy_stock(symbol, quantity)
                 if buy_resp and 'id' in buy_resp:

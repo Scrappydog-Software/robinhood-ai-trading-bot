@@ -111,30 +111,21 @@ input[type="text"]:focus { outline: none; border-color: var(--accent); }
 /* Recommendations section — color the Decision cell (2nd column) and add a
    subtle left accent on the row so buy/sell distinctions are visible at a
    glance without being garish on the dark theme. */
-tr.buy td:nth-child(2) {
-    color: var(--success);
-    border-left: 2px solid var(--success);
-    text-transform: uppercase;
-    font-size: 12px;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-}
-tr.sell td:nth-child(2) {
-    color: var(--danger);
-    border-left: 2px solid var(--danger);
-    text-transform: uppercase;
-    font-size: 12px;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-}
+tr.strong_buy td:nth-child(2),
+tr.buy td:nth-child(2),
+tr.sell td:nth-child(2),
+tr.strong_sell td:nth-child(2),
 tr.hold td:nth-child(2) {
-    color: var(--text-muted);
-    border-left: 2px solid var(--text-muted);
     text-transform: uppercase;
     font-size: 12px;
     letter-spacing: 0.5px;
     font-weight: 600;
 }
+tr.strong_buy td:nth-child(2) { color: #00e676; border-left: 3px solid #00e676; }
+tr.buy td:nth-child(2) { color: var(--success); border-left: 2px solid var(--success); }
+tr.hold td:nth-child(2) { color: var(--text-muted); border-left: 2px solid var(--text-muted); }
+tr.sell td:nth-child(2) { color: var(--danger); border-left: 2px solid var(--danger); }
+tr.strong_sell td:nth-child(2) { color: #ff1744; border-left: 3px solid #ff1744; }
 
 /* Recommendation cells in Portfolio & Watchlist tables — reuse the same
    typographic treatment as the Recommendations section's decision column. */
@@ -144,9 +135,11 @@ tr.hold td:nth-child(2) {
     letter-spacing: 0.5px;
     font-weight: 600;
 }
+.rec-strong_buy { color: #00e676; font-weight: 800; }
 .rec-buy  { color: var(--success); }
-.rec-sell { color: var(--danger); }
 .rec-hold { color: var(--text-muted); }
+.rec-sell { color: var(--danger); }
+.rec-strong_sell { color: #ff1744; font-weight: 800; }
 .rec-none { color: var(--text-muted); font-weight: 400; }
 
 /* Trading loop status card */

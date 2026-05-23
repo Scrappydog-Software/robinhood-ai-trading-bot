@@ -255,9 +255,9 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         symbol = d.get('symbol')
         if decision == 'hold':
             continue
-        if decision == 'sell' and symbol not in held:
+        if decision in ('sell', 'strong_sell') and symbol not in held:
             continue
-        if decision not in ('buy', 'sell'):
+        if decision not in ('strong_buy', 'buy', 'sell', 'strong_sell'):
             continue
         try:
             quantity = float(d.get('quantity', 0) or 0)
@@ -269,7 +269,8 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
             'quantity': quantity,
         })
 
-    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
+    order = {'strong_buy': 0, 'buy': 1, 'sell': 2, 'strong_sell': 3}
+    rows.sort(key=lambda r: (order.get(r['decision'], 4), r['symbol'] or ''))
 
     return {
         'available': True,
