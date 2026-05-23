@@ -79,7 +79,7 @@
                 </thead>
                 <tbody>
                     {% for row in recommendations.rows %}
-                        <tr class="{{ row.decision }}">
+                        <tr class="{{ row.decision }}" data-symbol="{{ row.symbol }}">
                             <td><strong>{{ row.symbol }}</strong></td>
                             <td>{{ row.decision }}</td>
                             <td>{{ "%.6f"|format(row.quantity) }}</td>
@@ -111,7 +111,7 @@
             </thead>
             <tbody>
                 {% for row in portfolio_rows %}
-                    <tr>
+                    <tr data-symbol="{{ row.symbol }}">
                         <td><strong>{{ row.symbol }}</strong></td>
                         <td>{{ row.quantity }}</td>
                         <td>${{ row.current_price }}</td>
@@ -151,7 +151,7 @@
                     <tbody>
                         {% for symbol in wl.symbols %}
                             {% set rec = decisions_map.get(symbol) %}
-                            <tr>
+                            <tr data-symbol="{{ symbol }}">
                                 <td><strong>{{ symbol }}</strong></td>
                                 <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
                                 <td class="actions-col">

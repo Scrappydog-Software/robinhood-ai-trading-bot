@@ -36,5 +36,134 @@
     <footer>
         <p>Local-only. Do not expose externally.</p>
     </footer>
+
+    <!-- Stock Detail Modal -->
+    <div id="stock-modal-backdrop" class="modal-backdrop" style="display:none;">
+        <div class="modal-card" id="stock-modal">
+            <div class="modal-header">
+                <h2 id="modal-title">Stock Detail</h2>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <p class="muted">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var backdrop = document.getElementById('stock-modal-backdrop');
+        var modalBody = document.getElementById('modal-body');
+        var modalTitle = document.getElementById('modal-title');
+        var closeBtn = document.getElementById('modal-close');
+
+        function openModal(symbol) {
+            modalTitle.textContent = symbol;
+            modalBody.innerHTML = '<p class="muted">Loading...</p>';
+            backdrop.style.display = 'flex';
+
+            fetch('/api/stock/' + encodeURIComponent(symbol))
+                .then(function(r) { return r.json(); })
+                .then(function(data) { renderModal(data); })
+                .catch(function(err) {
+                    modalBody.innerHTML = '<p class="error">Error loading data: ' + err + '</p>';
+                });
+        }
+
+        function closeModal() {
+            backdrop.style.display = 'none';
+        }
+
+        function esc(text) {
+            if (text === null || text === undefined) return '&mdash;';
+            var d = document.createElement('div');
+            d.textContent = String(text);
+            return d.innerHTML;
+        }
+
+        function renderModal(data) {
+            var html = '';
+
+            // Stock Overview
+            html += '<div class="modal-section"><h3>Stock Overview</h3>';
+            if (data.robinhood) {
+                html += '<dl class="kv">';
+                html += '<dt>Current Price</dt><dd>$' + esc(data.robinhood.current_price) + '</dd>';
+                html += '</dl>';
+            } else {
+                html += '<p class="muted">No price data available.</p>';
+            }
+            html += '</div>';
+
+            // Position
+            html += '<div class="modal-section"><h3>Position</h3>';
+            if (data.robinhood && data.robinhood.quantity > 0) {
+                html += '<dl class="kv">';
+                html += '<dt>Shares Held</dt><dd>' + esc(data.robinhood.quantity) + '</dd>';
+                html += '<dt>Avg Buy Price</dt><dd>$' + esc(data.robinhood.avg_buy_price) + '</dd>';
+                html += '<dt>Position Value</dt><dd>$' + esc(data.robinhood.position_value) + '</dd>';
+                html += '</dl>';
+            } else {
+                html += '<p class="muted">Not currently held in portfolio.</p>';
+            }
+            html += '</div>';
+
+            // AI Analysis
+            html += '<div class="modal-section"><h3>AI Analysis</h3>';
+            if (data.ai_decision) {
+                var dec = data.ai_decision.decision || 'unknown';
+                var cls = 'rec-' + dec.toLowerCase();
+                html += '<dl class="kv">';
+                html += '<dt>Decision</dt><dd class="rec ' + cls + '">' + esc(dec) + '</dd>';
+                html += '<dt>Quantity</dt><dd>' + esc(data.ai_decision.quantity) + '</dd>';
+                html += '</dl>';
+                if (data.ai_decision.rationale) {
+                    html += '<div class="modal-rationale"><strong>Rationale:</strong> ' + esc(data.ai_decision.rationale) + '</div>';
+                }
+            } else {
+                html += '<p class="muted">No AI analysis available for this stock.</p>';
+            }
+            html += '</div>';
+
+            // Ticker Details
+            html += '<div class="modal-section"><h3>Ticker Details</h3>';
+            if (data.ticker) {
+                html += '<dl class="kv">';
+                html += '<dt>Name</dt><dd>' + esc(data.ticker.name) + '</dd>';
+                html += '<dt>Market</dt><dd>' + esc(data.ticker.market) + '</dd>';
+                html += '<dt>Type</dt><dd>' + esc(data.ticker.type) + '</dd>';
+                html += '<dt>Exchange</dt><dd>' + esc(data.ticker.primary_exchange) + '</dd>';
+                html += '<dt>Active</dt><dd>' + (data.ticker.active === 1 ? 'Yes' : data.ticker.active === 0 ? 'No' : '&mdash;') + '</dd>';
+                html += '<dt>Currency</dt><dd>' + esc(data.ticker.currency_name) + '</dd>';
+                if (data.ticker.cik) html += '<dt>CIK</dt><dd>' + esc(data.ticker.cik) + '</dd>';
+                if (data.ticker.composite_figi) html += '<dt>FIGI</dt><dd>' + esc(data.ticker.composite_figi) + '</dd>';
+                html += '</dl>';
+            } else {
+                html += '<p class="muted">No ticker data in database. Load tickers from the Research page.</p>';
+            }
+            html += '</div>';
+
+            modalBody.innerHTML = html;
+        }
+
+        closeBtn.addEventListener('click', closeModal);
+        backdrop.addEventListener('click', function(e) {
+            if (e.target === backdrop) closeModal();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && backdrop.style.display !== 'none') closeModal();
+        });
+
+        // Delegate click on any TR with data-symbol
+        document.addEventListener('click', function(e) {
+            var tr = e.target.closest('tr[data-symbol]');
+            if (!tr) return;
+            // Don't intercept clicks on buttons, links, or form elements inside the row
+            if (e.target.closest('button, a, input, select, form')) return;
+            e.preventDefault();
+            openModal(tr.getAttribute('data-symbol'));
+        });
+    })();
+    </script>
 </body>
 </html>

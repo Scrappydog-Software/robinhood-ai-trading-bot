@@ -76,7 +76,7 @@
                 </thead>
                 <tbody>
                     {% for row in tickers %}
-                        <tr>
+                        <tr data-symbol="{{ row['ticker'] }}">
                             <td><strong>{{ row['ticker'] }}</strong></td>
                             <td>{{ row['name'] or '—' }}</td>
                             <td>{{ row['market'] or '—' }}</td>

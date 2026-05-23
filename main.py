@@ -67,13 +67,14 @@ def make_ai_decisions(account_info, portfolio_overview, watchlist_overview):
         "Return your decisions in a JSON array with this structure:\n"
         "```json\n"
         "[\n"
-        '  {"symbol": <symbol>, "decision": <decision>, "quantity": <quantity>},\n'
+        '  {"symbol": <symbol>, "decision": <decision>, "quantity": <quantity>, "rationale": <rationale>},\n'
         "  ...\n"
         "]\n"
         "```\n"
         "- <symbol>: Stock symbol.\n"
         "- <decision>: One of `buy`, `sell`, or `hold`.\n"
-        "- <quantity>: Recommended transaction quantity.\n\n"
+        "- <quantity>: Recommended transaction quantity.\n"
+        "- <rationale>: A brief explanation of WHY this decision was made, referencing specific data points (e.g. RSI, VWAP, moving averages, analyst ratings) that influenced the decision.\n\n"
         "**Instructions:**\n"
         "- Provide only the JSON output with no additional text.\n"
         "- Return an empty array if no actions are necessary."
@@ -153,6 +154,7 @@ def write_last_decisions(decisions_data, market_open):
             'symbol': d.get('symbol'),
             'decision': d.get('decision'),
             'quantity': d.get('quantity', 0),
+            'rationale': d.get('rationale', ''),
         }
         for d in (decisions_data or [])
     ]

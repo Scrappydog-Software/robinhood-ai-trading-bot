@@ -96,6 +96,40 @@ def _load_decisions_map():
     return mapping
 
 
+def _load_decisions_detail_map():
+    """Return a dict mapping symbol -> {decision, rationale, quantity}.
+
+    Like _load_decisions_map but includes all decision fields for the
+    stock detail popup.
+    """
+    state_decisions = trading_state.decisions
+    source = state_decisions if state_decisions else None
+
+    if not source:
+        if not os.path.exists(LAST_DECISIONS_PATH):
+            return {}
+        try:
+            with open(LAST_DECISIONS_PATH, 'r') as f:
+                payload = json.load(f)
+            source = payload.get('decisions') or []
+        except Exception as e:
+            logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions detail map: {e}")
+            return {}
+
+    mapping = {}
+    for d in source:
+        if not isinstance(d, dict):
+            continue
+        symbol = d.get('symbol')
+        if symbol:
+            mapping[symbol] = {
+                'decision': d.get('decision'),
+                'quantity': d.get('quantity', 0),
+                'rationale': d.get('rationale', ''),
+            }
+    return mapping
+
+
 app = Flask(__name__)
 # Local single-user app — session data does not need to survive restart.
 app.secret_key = os.urandom(24)
@@ -406,6 +440,62 @@ def api_status():
         'market_open': state['market_open'],
         'logged_in': state['logged_in'],
     })
+
+
+@app.route('/api/stock/<symbol>')
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_stock_detail(symbol):
+    """Return aggregated detail for a single stock.
+
+    Combines Robinhood holdings data, the latest AI decision + rationale,
+    and cached ticker details from SQLite.  Used by the stock detail modal.
+    """
+    symbol = symbol.upper()
+    result = {'symbol': symbol}
+
+    # --- Robinhood data (portfolio position) ---
+    rh_data = None
+    try:
+        holdings = robinhood.get_portfolio_stocks()
+        if holdings and symbol in holdings:
+            stock = holdings[symbol]
+            price = float(stock.get('price', 0) or 0)
+            qty = float(stock.get('quantity', 0) or 0)
+            avg = float(stock.get('average_buy_price', 0) or 0)
+            rh_data = {
+                'current_price': round(price, 2),
+                'quantity': round(qty, 6),
+                'avg_buy_price': round(avg, 2),
+                'position_value': round(price * qty, 2),
+            }
+        else:
+            # Not in portfolio — try to get current price via quote
+            try:
+                quote = robinhood.rh_run_with_retries(
+                    robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
+                )
+                if quote and isinstance(quote, list) and quote[0]:
+                    rh_data = {
+                        'current_price': round(float(quote[0]), 2),
+                        'quantity': 0,
+                        'avg_buy_price': 0,
+                        'position_value': 0,
+                    }
+            except Exception:
+                pass
+    except Exception as e:
+        logger.error(f"WebUI: api_stock_detail error fetching Robinhood data for {symbol}: {e}")
+    result['robinhood'] = rh_data
+
+    # --- AI decision + rationale ---
+    detail_map = _load_decisions_detail_map()
+    result['ai_decision'] = detail_map.get(symbol)
+
+    # --- Ticker details from SQLite ---
+    ticker_row = db.get_ticker_by_symbol(symbol)
+    result['ticker'] = ticker_row
+
+    return jsonify(result)
 
 
 @app.route('/api/loop/start', methods=['POST'])

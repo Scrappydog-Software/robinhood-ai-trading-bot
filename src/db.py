@@ -206,6 +206,20 @@ def get_loaded_at():
     return row[0] if row else None
 
 
+def get_ticker_by_symbol(symbol):
+    """Return a single ticker row by exact symbol match, or None."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM tickers WHERE ticker = ?", (symbol.upper(),)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return dict(row)
+
+
 def get_distinct_values(column):
     """Return sorted distinct non-null values for a column (for filter dropdowns)."""
     # Whitelist to prevent SQL injection
