@@ -14,7 +14,7 @@ import json
 import os
 import time
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
@@ -44,6 +44,7 @@ except NameError:
 LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
+from src.api import claude
 from src.api import massive_client
 from src import db
 from src.state import trading_state
@@ -480,26 +481,27 @@ def api_stock_detail(symbol):
     ticker_row = db.get_ticker_by_symbol(symbol)
     result['ticker'] = ticker_row
 
+    # --- Historical data status ---
+    result['history_status'] = db.get_stock_history_status(symbol)
+
     return jsonify(result)
 
 
 @app.route('/api/stock/<symbol>/analyze', methods=['POST'])
 @csrf.exempt
 def api_stock_analyze(symbol):
-    """On-demand single-stock AI analysis.
+    """On-demand single-stock AI analysis with historical storage.
 
-    Fetches the stock's market data from Robinhood (price, RSI, VWAP,
-    moving averages, analyst ratings), sends it to Claude for a
-    buy/sell/hold decision with rationale, and returns the result.
+    Fetches enrichment data from Robinhood, sends to Claude for a
+    buy/sell/hold decision with rationale, stores the result in
+    stock_analysis table, and returns the decision.
     """
     symbol = symbol.upper()
     logger.info(f"WebUI: on-demand analysis requested for {symbol}")
     try:
-        from src.api import claude
-        from main import get_ai_amount_guidelines
+        account_info = robinhood.get_account_info()
 
         logger.info(f"WebUI: fetching Robinhood data for {symbol}...")
-        account_info = robinhood.get_account_info()
         historical_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
         historical_year = robinhood.get_historical_data(symbol, interval="day", span="year")
         ratings_data = robinhood.get_ratings(symbol)
@@ -529,7 +531,7 @@ def api_stock_analyze(symbol):
             f"**Stock Data:**\n```json\n{json.dumps({symbol: stock_data}, indent=1)}\n```\n\n"
             f"**Account Buying Power:** ${account_info.get('buying_power', 'unknown')}\n\n"
             f"**Response Format:**\n"
-            f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<buy|sell|hold>", '
+            f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<strong_buy|buy|hold|sell|strong_sell>", '
             f'"quantity": <number>, "rationale": "<detailed explanation referencing RSI, VWAP, '
             f'moving averages, analyst ratings, and any other relevant data points>"}}\n\n'
             f"Provide only the JSON output with no additional text."
@@ -544,10 +546,76 @@ def api_stock_analyze(symbol):
         elif not isinstance(result, dict):
             result = {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': str(result)}
 
+        # Store in stock_analysis with source='on_demand'
+        analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        analyst_summary = stock_data.get('analyst_summary')
+        try:
+            db.insert_stock_analysis({
+                'symbol': symbol,
+                'analyzed_at': analyzed_at,
+                'decision': result.get('decision', ''),
+                'quantity': result.get('quantity'),
+                'rationale': result.get('rationale'),
+                'price': stock_data.get('current_price'),
+                'rsi': stock_data.get('rsi'),
+                'vwap': stock_data.get('vwap'),
+                'ma_50': stock_data.get('50_day_mavg_price'),
+                'ma_200': stock_data.get('200_day_mavg_price'),
+                'analyst_summary': json.dumps(analyst_summary) if analyst_summary else None,
+                'held_quantity': stock_data.get('my_quantity'),
+                'held_avg_price': stock_data.get('my_average_buy_price'),
+                'source': 'on_demand',
+            })
+        except Exception as e:
+            logger.error(f"WebUI: error storing on-demand analysis for {symbol}: {e}")
+
         logger.info(f"WebUI: analysis complete for {symbol}: {result.get('decision', '?')}")
         return jsonify({'ok': True, 'analysis': result})
     except Exception as e:
         logger.error(f"WebUI: on-demand analysis error for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/load-history', methods=['POST'])
+@csrf.exempt
+def api_stock_load_history(symbol):
+    """Fetch 2 years of daily OHLCV aggregates from Massive API and store them."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: loading 2-year history for {symbol}")
+
+    try:
+        today = datetime.now()
+        to_date = today.strftime('%Y-%m-%d')
+        from_date = (today - timedelta(days=730)).strftime('%Y-%m-%d')
+
+        client = massive_client.get_client()
+        aggs = client.get_aggs(symbol, 1, "day", from_date, to_date, limit=50000)
+
+        bars = []
+        for agg in aggs:
+            bar_date = datetime.fromtimestamp(agg.timestamp / 1000).strftime('%Y-%m-%d')
+            bars.append({
+                'bar_date': bar_date,
+                'open': getattr(agg, 'open', None),
+                'high': getattr(agg, 'high', None),
+                'low': getattr(agg, 'low', None),
+                'close': getattr(agg, 'close', None),
+                'volume': getattr(agg, 'volume', None),
+                'vwap': getattr(agg, 'vwap', None),
+                'transactions': getattr(agg, 'transactions', None),
+            })
+
+        bars_loaded = db.upsert_stock_history(symbol, bars)
+        logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol} ({from_date} to {to_date})")
+
+        return jsonify({
+            'ok': True,
+            'bars_loaded': bars_loaded,
+            'from_date': from_date,
+            'to_date': to_date,
+        })
+    except Exception as e:
+        logger.error(f"WebUI: error loading history for {symbol}: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 

@@ -66,6 +66,40 @@ CREATE INDEX IF NOT EXISTS idx_tickers_name   ON tickers(name);
 CREATE INDEX IF NOT EXISTS idx_tickers_market ON tickers(market);
 CREATE INDEX IF NOT EXISTS idx_tickers_type   ON tickers(type);
 CREATE INDEX IF NOT EXISTS idx_tickers_active ON tickers(active);
+
+CREATE TABLE IF NOT EXISTS stock_analysis (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol          TEXT NOT NULL,
+    analyzed_at     TEXT NOT NULL,
+    decision        TEXT NOT NULL,
+    quantity        REAL,
+    rationale       TEXT,
+    price           REAL,
+    rsi             REAL,
+    vwap            REAL,
+    ma_50           REAL,
+    ma_200          REAL,
+    analyst_summary TEXT,
+    held_quantity   REAL,
+    held_avg_price  REAL,
+    source          TEXT NOT NULL DEFAULT 'loop'
+);
+CREATE INDEX IF NOT EXISTS idx_stock_analysis_symbol_date ON stock_analysis(symbol, analyzed_at);
+
+CREATE TABLE IF NOT EXISTS stock_history (
+    symbol    TEXT NOT NULL,
+    bar_date  TEXT NOT NULL,
+    open      REAL,
+    high      REAL,
+    low       REAL,
+    close     REAL,
+    volume    INTEGER,
+    vwap      REAL,
+    transactions INTEGER,
+    loaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (symbol, bar_date)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_history_symbol ON stock_history(symbol);
 """
 
 
@@ -192,6 +226,115 @@ def get_ticker_count(query=None, market=None, type_=None, active=None):
     finally:
         conn.close()
     return count
+
+
+def insert_stock_analysis(row):
+    """Insert a single row into the stock_analysis table.
+
+    ``row`` is a dict whose keys match column names.  ``id`` and default
+    values are handled by the database.
+
+    Returns the rowid of the inserted record.
+    """
+    cols = [
+        'symbol', 'analyzed_at', 'decision', 'quantity', 'rationale',
+        'price', 'rsi', 'vwap', 'ma_50', 'ma_200', 'analyst_summary',
+        'held_quantity', 'held_avg_price', 'source',
+    ]
+    placeholders = ', '.join(['?'] * len(cols))
+    sql = f"INSERT INTO stock_analysis ({', '.join(cols)}) VALUES ({placeholders})"
+
+    conn = _connect()
+    try:
+        with _write_lock:
+            cursor = conn.cursor()
+            values = tuple(row.get(c) for c in cols)
+            cursor.execute(sql, values)
+            conn.commit()
+            return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def upsert_stock_history(symbol, bars):
+    """Batch INSERT OR REPLACE OHLCV bars into the stock_history table.
+
+    ``bars`` is an iterable of dicts with keys: bar_date, open, high, low,
+    close, volume, vwap, transactions.  ``symbol`` is prepended to each row.
+
+    Returns the number of rows written.
+    """
+    cols = [
+        'symbol', 'bar_date', 'open', 'high', 'low', 'close',
+        'volume', 'vwap', 'transactions',
+    ]
+    placeholders = ', '.join(['?'] * len(cols))
+    sql = f"INSERT OR REPLACE INTO stock_history ({', '.join(cols)}) VALUES ({placeholders})"
+
+    conn = _connect()
+    count = 0
+    try:
+        with _write_lock:
+            cursor = conn.cursor()
+            for bar in bars:
+                values = (
+                    symbol,
+                    bar.get('bar_date'),
+                    bar.get('open'),
+                    bar.get('high'),
+                    bar.get('low'),
+                    bar.get('close'),
+                    bar.get('volume'),
+                    bar.get('vwap'),
+                    bar.get('transactions'),
+                )
+                cursor.execute(sql, values)
+                count += 1
+            conn.commit()
+    finally:
+        conn.close()
+    return count
+
+
+def get_stock_history_status(symbol):
+    """Return history status for a symbol.
+
+    Returns a dict: {has_data, bar_count, earliest_date, latest_date}.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS bar_count, MIN(bar_date) AS earliest_date, "
+            "MAX(bar_date) AS latest_date FROM stock_history WHERE symbol = ?",
+            (symbol.upper(),)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    bar_count = row['bar_count'] if row else 0
+    return {
+        'has_data': bar_count > 0,
+        'bar_count': bar_count,
+        'earliest_date': row['earliest_date'] if row else None,
+        'latest_date': row['latest_date'] if row else None,
+    }
+
+
+def get_stock_analysis_history(symbol, limit=50):
+    """Return recent analysis rows for a symbol, newest first.
+
+    Returns a list of dicts.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM stock_analysis WHERE symbol = ? "
+            "ORDER BY analyzed_at DESC LIMIT ?",
+            (symbol.upper(), limit)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_loaded_at():
