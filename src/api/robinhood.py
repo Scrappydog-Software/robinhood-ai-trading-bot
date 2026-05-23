@@ -238,6 +238,22 @@ def get_watchlist_stocks(name):
     return resp['results']
 
 
+# Get all of the user's watchlists (full list of dicts with display_name, id, etc.)
+def get_all_watchlists():
+    """Return the user's watchlists as a list of dicts.
+
+    Each dict includes at least 'display_name' and 'id'. Powers the web UI's
+    dashboard, which lists everything the user has on Robinhood — not just the
+    bot's analysis subset in WATCHLIST_NAMES.
+    """
+    resp = rh_run_with_retries(rh.account.get_all_watchlists)
+    if resp is None:
+        raise Exception("Error getting watchlists: No response")
+    if isinstance(resp, dict):
+        return resp.get('results', [])
+    return resp or []
+
+
 # Create a new watchlist by name (uses undocumented Robinhood endpoint)
 def create_watchlist(name):
     """Create a new watchlist via the undocumented Robinhood `/midlands/lists/` POST endpoint.

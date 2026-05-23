@@ -37,16 +37,22 @@ csrf = CSRFProtect(app)
 
 
 def _build_watchlists_view():
-    """Fetch each configured watchlist and return a list of dicts.
+    """Fetch ALL of the user's watchlists from Robinhood — not just the
+    ones in WATCHLIST_NAMES (which is the trading-bot's analysis subset).
 
-    Each dict: {'name': str, 'symbols': [str, ...], 'error': str|None}
+    The dashboard is a UI for managing watchlists, so it should reflect
+    Robinhood's actual state — including any list the user just created
+    via this UI.
+
+    Returns a list of dicts: {'name': str, 'symbols': [str, ...], 'error': str|None}
     """
     watchlists = []
-    names = []
     try:
-        names = list(WATCHLIST_NAMES)  # noqa: F405 - imported from config
-    except NameError:
-        names = []
+        all_lists = robinhood.get_all_watchlists()
+        names = [w.get('display_name') for w in all_lists if isinstance(w, dict) and w.get('display_name')]
+    except Exception as e:
+        logger.error(f"WebUI: error loading all watchlists: {e}")
+        return [{'name': '?', 'symbols': [], 'error': f'Could not list watchlists: {e}'}]
 
     for name in names:
         try:
