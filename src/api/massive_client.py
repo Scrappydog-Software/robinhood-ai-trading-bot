@@ -45,15 +45,16 @@ def get_client():
 # Public helpers
 # ---------------------------------------------------------------------------
 
-def fetch_all_tickers():
+def fetch_all_tickers(limit=1000):
     """Fetch all tickers from the Massive API.
 
     Returns an iterator of Ticker objects (the Massive client paginates
-    automatically).
+    automatically).  ``limit`` controls the page size — set to the
+    maximum (1000) to minimise API calls against the 5 calls/min cap.
     """
     client = get_client()
-    logger.info("MassiveClient: fetching all tickers...")
-    return client.list_tickers()
+    logger.info(f"MassiveClient: fetching all tickers (page size={limit})...")
+    return client.list_tickers(limit=limit)
 
 
 def fetch_ticker_details(ticker):

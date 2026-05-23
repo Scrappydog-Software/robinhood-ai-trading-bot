@@ -287,6 +287,26 @@ tr.sell td:nth-child(2) {
     border-bottom: 1px solid var(--border);
     padding-bottom: 4px;
 }
+.btn-analyze {
+    margin-top: 10px;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    cursor: pointer;
+}
+.btn-analyze:hover { background: var(--accent); color: #fff; }
+.btn-analyze:disabled { opacity: 0.6; cursor: wait; }
+.spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .modal-rationale {
     margin-top: 10px;
     padding: 10px 12px;

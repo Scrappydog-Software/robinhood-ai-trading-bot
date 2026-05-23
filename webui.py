@@ -12,6 +12,7 @@ URL:             http://127.0.0.1:5001
 import asyncio
 import json
 import os
+import time
 import warnings
 from datetime import datetime, timezone
 
@@ -498,6 +499,74 @@ def api_stock_detail(symbol):
     return jsonify(result)
 
 
+@app.route('/api/stock/<symbol>/analyze', methods=['POST'])
+@csrf.exempt
+def api_stock_analyze(symbol):
+    """On-demand single-stock AI analysis.
+
+    Fetches the stock's market data from Robinhood (price, RSI, VWAP,
+    moving averages, analyst ratings), sends it to Claude for a
+    buy/sell/hold decision with rationale, and returns the result.
+    """
+    symbol = symbol.upper()
+    logger.info(f"WebUI: on-demand analysis requested for {symbol}")
+    try:
+        from src.api import claude
+        from main import get_ai_amount_guidelines
+
+        logger.info(f"WebUI: fetching Robinhood data for {symbol}...")
+        account_info = robinhood.get_account_info()
+        historical_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
+        historical_year = robinhood.get_historical_data(symbol, interval="day", span="year")
+        ratings_data = robinhood.get_ratings(symbol)
+
+        holdings = robinhood.get_portfolio_stocks()
+        if holdings and symbol in holdings:
+            stock_data = robinhood.extract_my_stocks_data(holdings[symbol])
+        else:
+            price_list = robinhood.rh_run_with_retries(
+                robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
+            )
+            price = float(price_list[0]) if price_list and price_list[0] else 0
+            stock_data = {
+                'current_price': round(price, 2),
+                'my_quantity': 0,
+                'my_average_buy_price': 0,
+            }
+
+        stock_data = robinhood.enrich_with_rsi(stock_data, historical_day, symbol)
+        stock_data = robinhood.enrich_with_vwap(stock_data, historical_day, symbol)
+        stock_data = robinhood.enrich_with_moving_averages(stock_data, historical_year, symbol)
+        stock_data = robinhood.enrich_with_analyst_ratings(stock_data, ratings_data)
+        logger.info(f"WebUI: Robinhood data enriched for {symbol}, sending to Claude...")
+
+        prompt = (
+            f"Analyze this single stock and provide a buy, sell, or hold recommendation.\n\n"
+            f"**Stock Data:**\n```json\n{json.dumps({symbol: stock_data}, indent=1)}\n```\n\n"
+            f"**Account Buying Power:** ${account_info.get('buying_power', 'unknown')}\n\n"
+            f"**Response Format:**\n"
+            f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<buy|sell|hold>", '
+            f'"quantity": <number>, "rationale": "<detailed explanation referencing RSI, VWAP, '
+            f'moving averages, analyst ratings, and any other relevant data points>"}}\n\n'
+            f"Provide only the JSON output with no additional text."
+        )
+
+        ai_response = claude.make_ai_request(prompt)
+        logger.info(f"WebUI: Claude response received for {symbol}, parsing...")
+        result = claude.parse_ai_response(ai_response)
+
+        if isinstance(result, list) and len(result) > 0:
+            result = result[0]
+        elif not isinstance(result, dict):
+            result = {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': str(result)}
+
+        logger.info(f"WebUI: analysis complete for {symbol}: {result.get('decision', '?')}")
+        return jsonify({'ok': True, 'analysis': result})
+    except Exception as e:
+        logger.error(f"WebUI: on-demand analysis error for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/loop/start', methods=['POST'])
 @csrf.exempt  # JSON API endpoint — CSRF token not applicable
 def api_loop_start():
@@ -606,8 +675,10 @@ def api_tickers_load():
             'source_feed':          getattr(t, 'source_feed', None),
         }
 
+    RATE_LIMIT_DELAY = 13  # seconds between pages — Massive API allows 5 calls/min
+
     try:
-        tickers_iter = massive_client.fetch_all_tickers()
+        tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
         batch = []
         total = 0
         for t in tickers_iter:
@@ -615,7 +686,9 @@ def api_tickers_load():
             if len(batch) >= BATCH_SIZE:
                 count = db.upsert_tickers(batch)
                 total += count
+                logger.info(f"WebUI: loaded {total} tickers so far, sleeping {RATE_LIMIT_DELAY}s for rate limit...")
                 batch = []
+                time.sleep(RATE_LIMIT_DELAY)
         if batch:
             count = db.upsert_tickers(batch)
             total += count
