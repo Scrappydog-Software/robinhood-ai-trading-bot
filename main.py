@@ -245,15 +245,19 @@ def trading_bot(market_open=None):
         logger.info("Prepare watchlist overview for AI analysis...")
         for stock_data in watchlist_stocks:
             symbol = stock_data['symbol']
-            historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-            historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-            ratings_data = robinhood.get_ratings(symbol)
-            watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
-            watchlist_overview[symbol] = robinhood.enrich_with_rsi(watchlist_overview[symbol], historical_data_day, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_vwap(watchlist_overview[symbol], historical_data_day, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_moving_averages(watchlist_overview[symbol], historical_data_year, symbol)
-            watchlist_overview[symbol] = robinhood.enrich_with_analyst_ratings(watchlist_overview[symbol], ratings_data)
-            watchlist_overview[symbol] = robinhood.enrich_with_pdt_restrictions(watchlist_overview[symbol], symbol)
+            try:
+                historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
+                historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
+                ratings_data = robinhood.get_ratings(symbol)
+                watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
+                watchlist_overview[symbol] = robinhood.enrich_with_rsi(watchlist_overview[symbol], historical_data_day, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_vwap(watchlist_overview[symbol], historical_data_day, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_moving_averages(watchlist_overview[symbol], historical_data_year, symbol)
+                watchlist_overview[symbol] = robinhood.enrich_with_analyst_ratings(watchlist_overview[symbol], ratings_data)
+                watchlist_overview[symbol] = robinhood.enrich_with_pdt_restrictions(watchlist_overview[symbol], symbol)
+            except Exception as e:
+                logger.error(f"Skipping watchlist stock {symbol}: {e}")
+                continue
 
     if len(portfolio_overview) == 0 and len(watchlist_overview) == 0:
         logger.warning("No stocks to analyze, skipping AI-based decision-making...")
