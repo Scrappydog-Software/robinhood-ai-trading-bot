@@ -212,7 +212,7 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
-def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle):
+def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle, portfolio_symbols=None):
     """Common logic to shape a decisions list into the template view dict.
 
     Used by both the in-process state path and the JSON file fallback.
@@ -247,25 +247,30 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
         threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
         stale = age_seconds > threshold
 
+    held = set(portfolio_symbols or [])
     rows = []
     for d in decisions:
         if not isinstance(d, dict):
             continue
         decision = d.get('decision')
-        if decision not in ('buy', 'sell', 'hold'):
+        symbol = d.get('symbol')
+        if decision == 'hold':
+            continue
+        if decision == 'sell' and symbol not in held:
+            continue
+        if decision not in ('buy', 'sell'):
             continue
         try:
             quantity = float(d.get('quantity', 0) or 0)
         except (TypeError, ValueError):
             quantity = 0.0
         rows.append({
-            'symbol': d.get('symbol'),
+            'symbol': symbol,
             'decision': decision,
             'quantity': quantity,
         })
 
-    order = {'buy': 0, 'sell': 1, 'hold': 2}
-    rows.sort(key=lambda r: (order.get(r['decision'], 3), r['symbol'] or ''))
+    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
 
     return {
         'available': True,
@@ -279,31 +284,12 @@ def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_c
     }
 
 
-def _build_recommendations_view():
-    """Load the most recent cycle's filtered AI decisions and shape them
-    for the template.
+def _build_recommendations_view(portfolio_symbols=None):
+    """Load the most recent cycle's AI decisions, filtered for actionable items.
 
-    Reads from in-process shared state first (populated by the unified app's
-    trading loop). Falls back to data/last-decisions.json if shared state has
-    no decisions (backward compatibility when running webui.py standalone
-    alongside a separate main.py process).
-
-    Contract:
-      - no data            -> available=False, error=None (template says
-                              "no recent recommendations")
-      - malformed JSON     -> available=False, error=<msg>
-      - parsed OK          -> available=True, rows filtered to buy/sell only,
-                              sorted by (decision: buy<sell, then symbol asc).
-                              stale flag computed against RUN_INTERVAL or
-                              AFTER_HOURS_INTERVAL depending on whether the
-                              market was open at write time.
-      - hold-count         -> exposed separately so the template can render
-                              "N hold decisions filtered out" when the visible
-                              rows list is empty but the cycle did run.
-
-    Holds are filtered out HERE rather than at write time so other consumers
-    of data/last-decisions.json (debugging, future analytics) can still see
-    the model's full output.
+    Shows only buy recommendations and sell recommendations for stocks
+    currently in the portfolio. Holds are excluded — they remain visible
+    in the Recommendation column of the Portfolio and Watchlist tables.
     """
     empty = {
         'available': False,
@@ -323,6 +309,7 @@ def _build_recommendations_view():
             state['decisions'],
             state['last_cycle_time'],
             state['market_open'],
+            portfolio_symbols=portfolio_symbols,
         )
 
     # Fall back to JSON file
@@ -342,6 +329,7 @@ def _build_recommendations_view():
         payload.get('decisions') or [],
         payload.get('timestamp'),
         payload.get('market_open'),
+        portfolio_symbols=portfolio_symbols,
     )
 
 
@@ -349,8 +337,9 @@ def _build_recommendations_view():
 def index():
     account = _build_account_view()
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
+    portfolio_symbols = [r['symbol'] for r in portfolio_rows]
     watchlists = _build_watchlists_view()
-    recommendations = _build_recommendations_view()
+    recommendations = _build_recommendations_view(portfolio_symbols=portfolio_symbols)
     decisions_map = _load_decisions_map()
     loop_status = trading_state.snapshot()
     return render_template(

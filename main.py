@@ -251,9 +251,6 @@ def trading_bot(market_open=None):
 
     watchlist_overview = {}
     if len(watchlist_stocks) > 0:
-        logger.debug(f"Limiting watchlist stocks to overview limit of {WATCHLIST_OVERVIEW_LIMIT}...")
-        watchlist_stocks = limit_watchlist_stocks(watchlist_stocks, WATCHLIST_OVERVIEW_LIMIT)
-
         logger.debug(f"Removing portfolio stocks from watchlist...")
         watchlist_stocks = [stock for stock in watchlist_stocks if stock['symbol'] not in portfolio_stocks.keys()]
 
