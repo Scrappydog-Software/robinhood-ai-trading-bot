@@ -43,6 +43,8 @@ except NameError:
 LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
+from src.api import massive_client
+from src import db
 from src.state import trading_state
 from src.trading import loop as trading_loop
 from src.utils import logger
@@ -428,6 +430,110 @@ def api_loop_stop():
         'stopped': stopped,
         'loop_running': trading_loop.is_running(),
     })
+
+
+# ---- Stock Research page ----
+
+RESEARCH_PAGE_SIZE = 50
+
+
+@app.route('/research')
+def research():
+    """Render the Stock Research page with search, filter, and pagination."""
+    q = request.args.get('q', '').strip() or None
+    market_filter = request.args.get('market', '').strip() or None
+    type_filter = request.args.get('type', '').strip() or None
+    active_raw = request.args.get('active', '').strip()
+
+    active_filter = None
+    if active_raw in ('0', '1'):
+        active_filter = int(active_raw)
+
+    page = request.args.get('page', 1, type=int)
+    if page < 1:
+        page = 1
+    offset = (page - 1) * RESEARCH_PAGE_SIZE
+
+    tickers = db.search_tickers(
+        query=q, market=market_filter, type_=type_filter,
+        active=active_filter, limit=RESEARCH_PAGE_SIZE, offset=offset,
+    )
+    ticker_count = db.get_ticker_count(
+        query=q, market=market_filter, type_=type_filter, active=active_filter,
+    )
+    total_pages = max(1, (ticker_count + RESEARCH_PAGE_SIZE - 1) // RESEARCH_PAGE_SIZE)
+    loaded_at = db.get_loaded_at()
+
+    # Distinct values for filter dropdowns
+    markets = db.get_distinct_values('market')
+    types = db.get_distinct_values('type')
+
+    return render_template(
+        'research.html',
+        tickers=tickers,
+        ticker_count=ticker_count,
+        total_pages=total_pages,
+        page=page,
+        q=q,
+        market_filter=market_filter,
+        type_filter=type_filter,
+        active_filter=active_filter,
+        active_raw=active_raw,
+        loaded_at=loaded_at,
+        markets=markets,
+        types=types,
+    )
+
+
+@app.route('/api/tickers/load', methods=['POST'])
+@csrf.exempt  # JSON API endpoint — CSRF token not applicable
+def api_tickers_load():
+    """Fetch all tickers from the Massive API and store in SQLite.
+
+    Streams from the API iterator and batches inserts (1000 rows per batch).
+    Returns JSON with the count of tickers loaded.
+    """
+    BATCH_SIZE = 1000
+
+    def _ticker_to_row(t):
+        return {
+            'ticker':               getattr(t, 'ticker', None),
+            'name':                 getattr(t, 'name', None),
+            'market':               getattr(t, 'market', None),
+            'locale':               getattr(t, 'locale', None),
+            'type':                 getattr(t, 'type', None),
+            'active':               int(getattr(t, 'active', False)) if getattr(t, 'active', None) is not None else None,
+            'currency_name':        getattr(t, 'currency_name', None),
+            'currency_symbol':      getattr(t, 'currency_symbol', None),
+            'base_currency_symbol': getattr(t, 'base_currency_symbol', None),
+            'base_currency_name':   getattr(t, 'base_currency_name', None),
+            'cik':                  getattr(t, 'cik', None),
+            'composite_figi':       getattr(t, 'composite_figi', None),
+            'share_class_figi':     getattr(t, 'share_class_figi', None),
+            'primary_exchange':     getattr(t, 'primary_exchange', None),
+            'last_updated_utc':     getattr(t, 'last_updated_utc', None),
+            'delisted_utc':         getattr(t, 'delisted_utc', None),
+            'source_feed':          getattr(t, 'source_feed', None),
+        }
+
+    try:
+        tickers_iter = massive_client.fetch_all_tickers()
+        batch = []
+        total = 0
+        for t in tickers_iter:
+            batch.append(_ticker_to_row(t))
+            if len(batch) >= BATCH_SIZE:
+                count = db.upsert_tickers(batch)
+                total += count
+                batch = []
+        if batch:
+            count = db.upsert_tickers(batch)
+            total += count
+        logger.info(f"WebUI: loaded {total} tickers from Massive API")
+        return jsonify({'ok': True, 'count': total})
+    except Exception as e:
+        logger.error(f"WebUI: error loading tickers: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':

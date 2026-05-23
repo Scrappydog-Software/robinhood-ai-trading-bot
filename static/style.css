@@ -31,6 +31,19 @@ header h1 { margin: 0; font-size: 20px; }
 .subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
 .subtitle code { background: var(--bg); padding: 1px 6px; border-radius: 3px; }
 
+.header-row { display: flex; justify-content: space-between; align-items: center; }
+.main-nav { display: flex; gap: 16px; }
+.main-nav a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.main-nav a:hover { color: var(--text); background: rgba(74, 158, 255, 0.08); }
+
 main { max-width: 960px; margin: 24px auto; padding: 0 24px; }
 footer { text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px; }
 
@@ -157,6 +170,7 @@ tr.sell td:nth-child(2) {
 .loop-controls .btn { min-width: 100px; }
 .btn-start { background: var(--success); color: #1a1a1a; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-sm { padding: 4px 10px; font-size: 13px; text-decoration: none; display: inline-block; }
 
 .stale-badge {
     display: inline-block;
@@ -181,4 +195,44 @@ tr.sell td:nth-child(2) {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-left: 4px;
+}
+
+/* Research page */
+.research-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.research-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+}
+.research-filter-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.research-filter-form select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-family: inherit;
+}
+.research-filter-form select:focus { outline: none; border-color: var(--accent); }
+
+.table-scroll { overflow-x: auto; }
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
 }

@@ -4,6 +4,7 @@ ANTHROPIC_API_KEY = "..."                   # Anthropic API key (https://console
 ROBINHOOD_USERNAME = "..."                  # Robinhood username
 ROBINHOOD_PASSWORD = "..."                  # Robinhood password
 ROBINHOOD_MFA_SECRET = ""                   # Robinhood MFA secret (if enabled)
+MASSIVE_API_KEY = "..."                     # Massive API key (https://massive.io/) — powers the Stock Research page
 
 # Basic config parameters
 MODE = "demo"                               # Trading mode (demo, auto, manual)
