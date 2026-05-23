@@ -72,6 +72,7 @@
                     <th>Current Price</th>
                     <th>Avg Buy Price</th>
                     <th>Position Value</th>
+                    <th>Recommendation</th>
                 </tr>
             </thead>
             <tbody>
@@ -82,6 +83,7 @@
                         <td>${{ row.current_price }}</td>
                         <td>${{ row.avg_buy_price }}</td>
                         <td>${{ row.position_value }}</td>
+                        <td class="rec rec-{{ (row.recommendation or 'none')|lower }}">{% if row.recommendation %}{{ row.recommendation }}{% else %}&mdash;{% endif %}</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -108,13 +110,16 @@
                     <thead>
                         <tr>
                             <th>Symbol</th>
+                            <th>Recommendation</th>
                             <th class="actions-col">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for symbol in wl.symbols %}
+                            {% set rec = decisions_map.get(symbol) %}
                             <tr>
                                 <td><strong>{{ symbol }}</strong></td>
+                                <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
                                 <td class="actions-col">
                                     <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
