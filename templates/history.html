@@ -30,14 +30,11 @@
         </div>
 
         <div style="margin-bottom:16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <button class="btn" id="btn-compute-signals" style="background:var(--accent);color:#fff;border:none;">
-                {% if has_signals %}Recompute Signals{% else %}Compute Signals (Rule-Based){% endif %}
+            <button class="btn" id="btn-compute-python" style="background:var(--accent);color:#fff;border:none;">
+                Recompute (Python)
             </button>
-            <button class="btn btn-sm" id="btn-compute-indicators" style="background:var(--bg-elev);border:1px solid var(--accent);color:var(--accent);">
-                {% if has_indicators %}Recompute Indicators{% else %}Compute Indicators{% endif %}
-            </button>
-            <button class="btn btn-sm" id="btn-analyze-history" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--muted);">
-                {% if unanalyzed_count == 0 %}All Analyzed (Haiku){% else %}Analyze {{ unanalyzed_count }} Bars (Haiku){% endif %}
+            <button class="btn" id="btn-compute-haiku" style="background:var(--bg-elev);border:1px solid var(--accent);color:var(--accent);">
+                Recompute (Haiku)
             </button>
             <span id="analyze-status" class="muted small"></span>
         </div>
@@ -213,82 +210,56 @@
         }
     });
 
-    // Analyze button
-    var btn = document.getElementById('btn-analyze-history');
+    // Recompute (Python) — indicators + rule-based signals
+    var btnPython = document.getElementById('btn-compute-python');
     var status = document.getElementById('analyze-status');
-    if (btn) {
-        btn.addEventListener('click', function() {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner"></span> Analyzing with Haiku&hellip;';
+    if (btnPython) {
+        btnPython.addEventListener('click', function() {
+            btnPython.disabled = true;
+            btnPython.innerHTML = '<span class="spinner"></span> Computing (Python)&hellip;';
             status.textContent = '';
-
-            fetch('/api/stock/{{ symbol }}/backtest-analyze', { method: 'POST' })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.ok) {
-                        status.textContent = data.analyzed + ' bars analyzed';
-                        setTimeout(function() { window.location.reload(); }, 1500);
-                    } else {
-                        btn.disabled = false;
-                        btn.textContent = 'Retry Analysis';
-                        status.textContent = 'Error: ' + (data.error || 'Unknown');
-                    }
-                })
-                .catch(function(err) {
-                    btn.disabled = false;
-                    btn.textContent = 'Retry Analysis';
-                    status.textContent = 'Error: ' + err;
-                });
-        });
-    }
-
-    // Compute Indicators button
-    var btnInd = document.getElementById('btn-compute-indicators');
-    if (btnInd) {
-        btnInd.addEventListener('click', function() {
-            btnInd.disabled = true;
-            btnInd.innerHTML = '<span class="spinner"></span> Computing...';
             fetch('/api/stock/{{ symbol }}/compute-indicators', { method: 'POST' })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.ok) {
-                        status.textContent = data.bars_computed + ' bars computed';
+                        status.textContent = data.bars_computed + ' bars scored (Python)';
                         setTimeout(function() { window.location.reload(); }, 1000);
                     } else {
-                        btnInd.disabled = false;
-                        btnInd.textContent = 'Retry';
+                        btnPython.disabled = false;
+                        btnPython.textContent = 'Retry (Python)';
                         status.textContent = 'Error: ' + (data.error || 'Unknown');
                     }
                 })
                 .catch(function(err) {
-                    btnInd.disabled = false;
-                    btnInd.textContent = 'Retry';
+                    btnPython.disabled = false;
+                    btnPython.textContent = 'Retry (Python)';
                     status.textContent = 'Error: ' + err;
                 });
         });
     }
 
-    // Compute Signals button (rule-based, no LLM)
-    var btnSig = document.getElementById('btn-compute-signals');
-    if (btnSig) {
-        btnSig.addEventListener('click', function() {
-            btnSig.disabled = true;
-            btnSig.innerHTML = '<span class="spinner"></span> Scoring...';
-            fetch('/api/stock/{{ symbol }}/compute-signals', { method: 'POST' })
+    // Recompute (Haiku) — LLM-based analysis
+    var btnHaiku = document.getElementById('btn-compute-haiku');
+    if (btnHaiku) {
+        btnHaiku.addEventListener('click', function() {
+            btnHaiku.disabled = true;
+            btnHaiku.innerHTML = '<span class="spinner"></span> Analyzing (Haiku)&hellip;';
+            status.textContent = '';
+            fetch('/api/stock/{{ symbol }}/backtest-analyze', { method: 'POST' })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     if (data.ok) {
-                        status.textContent = data.bars_scored + ' bars scored (rule-based)';
-                        setTimeout(function() { window.location.reload(); }, 1000);
+                        status.textContent = data.analyzed + ' bars analyzed (Haiku)';
+                        setTimeout(function() { window.location.reload(); }, 1500);
                     } else {
-                        btnSig.disabled = false;
-                        btnSig.textContent = 'Retry Signals';
+                        btnHaiku.disabled = false;
+                        btnHaiku.textContent = 'Retry (Haiku)';
                         status.textContent = 'Error: ' + (data.error || 'Unknown');
                     }
                 })
                 .catch(function(err) {
-                    btnSig.disabled = false;
-                    btnSig.textContent = 'Retry Signals';
+                    btnHaiku.disabled = false;
+                    btnHaiku.textContent = 'Retry (Haiku)';
                     status.textContent = 'Error: ' + err;
                 });
         });
