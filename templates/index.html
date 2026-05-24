@@ -120,7 +120,7 @@
                         <td>${{ row.avg_buy_price }}</td>
                         <td>${{ row.position_value }}</td>
                         <td class="rec rec-{{ (row.recommendation or 'none')|lower }}">{% if row.recommendation %}{{ row.recommendation }}{% else %}&mdash;{% endif %}</td>
-                        <td class="{% if stats and stats.backtest_return_pct is not none %}{% if stats.backtest_return_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if stats and stats.backtest_return_pct is not none %}{{ "+" if stats.backtest_return_pct >= 0 }}{{ stats.backtest_return_pct }}%{% else %}&mdash;{% endif %}</td>
+                        {% set bt_pct = stats.bt_1yr_return_pct if (stats and stats.bt_1yr_return_pct is not none) else (stats.backtest_return_pct if stats else none) %}<td class="{% if bt_pct is not none %}{% if bt_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if bt_pct is not none %}{{ "+" if bt_pct >= 0 }}{{ bt_pct }}%{% else %}&mdash;{% endif %}</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -159,7 +159,7 @@
                             <tr data-symbol="{{ symbol }}">
                                 <td><strong>{{ symbol }}</strong></td>
                                 <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
-                                <td class="{% if stats and stats.backtest_return_pct is not none %}{% if stats.backtest_return_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if stats and stats.backtest_return_pct is not none %}{{ "+" if stats.backtest_return_pct >= 0 }}{{ stats.backtest_return_pct }}%{% else %}&mdash;{% endif %}</td>
+                                {% set bt_pct = stats.bt_1yr_return_pct if (stats and stats.bt_1yr_return_pct is not none) else (stats.backtest_return_pct if stats else none) %}<td class="{% if bt_pct is not none %}{% if bt_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if bt_pct is not none %}{{ "+" if bt_pct >= 0 }}{{ bt_pct }}%{% else %}&mdash;{% endif %}</td>
                                 <td class="actions-col">
                                     <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

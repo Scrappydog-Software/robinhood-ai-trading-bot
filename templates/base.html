@@ -146,16 +146,30 @@
 
             // Backtest Performance
             html += '<div class="modal-section"><h3>Backtest Performance</h3>';
-            if (data.stats && data.stats.backtest_return_pct !== null) {
-                var retPct = data.stats.backtest_return_pct;
-                var retClass = retPct >= 0 ? 'rec-buy' : 'rec-sell';
+            if (data.stats && (data.stats.bt_1yr_return_pct !== null || data.stats.backtest_return_pct !== null)) {
                 html += '<dl class="kv">';
-                html += '<dt>2-Year Return</dt><dd class="' + retClass + '" style="font-weight:700;font-size:16px;">' + (retPct >= 0 ? '+' : '') + retPct + '%</dd>';
-                html += '<dt>$100 &rarr;</dt><dd>$' + esc(data.stats.backtest_final) + '</dd>';
-                html += '<dt>Trades</dt><dd>' + esc(data.stats.backtest_trades) + '</dd>';
+                // 1-Year Return (always shown if stats exist)
+                if (data.stats.bt_1yr_return_pct !== null && data.stats.bt_1yr_return_pct !== undefined) {
+                    var yr1Pct = data.stats.bt_1yr_return_pct;
+                    var yr1Class = yr1Pct >= 0 ? 'rec-buy' : 'rec-sell';
+                    html += '<dt>1-Year Return</dt><dd class="' + yr1Class + '" style="font-weight:700;font-size:16px;">' + (yr1Pct >= 0 ? '+' : '') + yr1Pct + '%</dd>';
+                    html += '<dt>$100 &rarr;</dt><dd>$' + esc(data.stats.bt_1yr_final) + ' (' + esc(data.stats.bt_1yr_trades) + ' trades)</dd>';
+                }
+                // 2-Year Return (only shown if enough history)
+                if (data.stats.backtest_return_pct !== null && data.stats.backtest_return_pct !== undefined) {
+                    var yr2Pct = data.stats.backtest_return_pct;
+                    var yr2Class = yr2Pct >= 0 ? 'rec-buy' : 'rec-sell';
+                    html += '<dt>2-Year Return</dt><dd class="' + yr2Class + '" style="font-weight:700;font-size:16px;">' + (yr2Pct >= 0 ? '+' : '') + yr2Pct + '%</dd>';
+                    html += '<dt>$100 &rarr;</dt><dd>$' + esc(data.stats.backtest_final) + ' (' + esc(data.stats.backtest_trades) + ' trades)</dd>';
+                } else {
+                    html += '<dt>2-Year Return</dt><dd class="muted">Insufficient history (need 2 years)</dd>';
+                }
                 if (data.stats.latest_signal) {
                     var sigCls = 'rec-' + data.stats.latest_signal;
                     html += '<dt>Latest Signal</dt><dd class="rec ' + sigCls + '">' + esc(data.stats.latest_signal) + ' (' + esc(data.stats.latest_score) + ')</dd>';
+                }
+                if (data.stats.history_bars) {
+                    html += '<dt>History</dt><dd>' + esc(data.stats.history_bars) + ' trading days</dd>';
                 }
                 html += '</dl>';
             } else {

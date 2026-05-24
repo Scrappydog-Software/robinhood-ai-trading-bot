@@ -131,8 +131,12 @@ CREATE TABLE IF NOT EXISTS stock_stats (
     backtest_return_pct REAL,
     backtest_trades     INTEGER,
     backtest_final      REAL,
+    bt_1yr_return_pct   REAL,
+    bt_1yr_trades       INTEGER,
+    bt_1yr_final        REAL,
     latest_signal       TEXT,
     latest_score        INTEGER,
+    history_bars        INTEGER,
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 """
@@ -163,7 +167,11 @@ ALTER TABLE stock_history ADD COLUMN signal_bb TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_volume TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_synthesis TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_score INTEGER;
-CREATE TABLE IF NOT EXISTS stock_stats (symbol TEXT PRIMARY KEY, backtest_return_pct REAL, backtest_trades INTEGER, backtest_final REAL, latest_signal TEXT, latest_score INTEGER, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')));
+CREATE TABLE IF NOT EXISTS stock_stats (symbol TEXT PRIMARY KEY, backtest_return_pct REAL, backtest_trades INTEGER, backtest_final REAL, bt_1yr_return_pct REAL, bt_1yr_trades INTEGER, bt_1yr_final REAL, latest_signal TEXT, latest_score INTEGER, history_bars INTEGER, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')));
+ALTER TABLE stock_stats ADD COLUMN bt_1yr_return_pct REAL;
+ALTER TABLE stock_stats ADD COLUMN bt_1yr_trades INTEGER;
+ALTER TABLE stock_stats ADD COLUMN bt_1yr_final REAL;
+ALTER TABLE stock_stats ADD COLUMN history_bars INTEGER;
 """
 
 
@@ -709,12 +717,49 @@ def compute_signals(symbol):
     return len(bars)
 
 
-def compute_backtest_stats(symbol):
-    """Run a backtest simulation using signal_synthesis and store results.
+def _run_backtest(rows):
+    """Run a backtest simulation on a list of bar rows.
 
-    Simulates $100 initial investment: buy at close on buy/strong_buy,
-    sell all at open on sell/strong_sell. Stores return percentage,
-    trade count, final value, and latest signal in stock_stats.
+    Returns (return_pct, trades, final_value).
+    """
+    if not rows:
+        return 0.0, 0, 100.0
+
+    INITIAL = 100.0
+    capital = INITIAL
+    shares_held = 0.0
+    state = 'waiting'
+    trades = 0
+
+    for row in rows:
+        sig = (row['signal_synthesis'] or '').lower()
+        if state == 'waiting' and sig in ('buy', 'strong_buy'):
+            close_price = row['close'] or 0
+            if close_price > 0 and capital > 0:
+                shares_held = capital / close_price
+                state = 'holding'
+        elif state == 'holding' and sig in ('sell', 'strong_sell'):
+            open_price = row['open'] or 0
+            capital = shares_held * open_price
+            shares_held = 0.0
+            state = 'waiting'
+            trades += 1
+
+    if state == 'holding' and rows:
+        final = shares_held * (rows[-1]['close'] or 0)
+    else:
+        final = capital
+
+    return_pct = round((final - INITIAL) / INITIAL * 100, 1) if INITIAL > 0 else 0
+    return return_pct, trades, round(final, 2)
+
+
+def compute_backtest_stats(symbol):
+    """Run backtest simulations and store 1-year and 2-year results.
+
+    Always computes a 1-year return (last 252 bars) and a full-history
+    return (all available bars, labeled as 2-year if >= 400 bars).
+    Stores both in stock_stats so the UI can show accurate labels.
 
     Called automatically after compute_signals.
     """
@@ -732,39 +777,30 @@ def compute_backtest_stats(symbol):
     if not rows:
         return
 
-    INITIAL = 100.0
-    capital = INITIAL
-    shares_held = 0.0
-    state = 'waiting'
-    trades = 0
+    rows = [dict(r) for r in rows]
+
+    # Full history backtest
+    full_pct, full_trades, full_final = _run_backtest(rows)
+
+    # 1-year backtest (last 252 trading days)
+    one_year_bars = rows[-252:] if len(rows) > 252 else rows
+    yr1_pct, yr1_trades, yr1_final = _run_backtest(one_year_bars)
+
+    # 2-year return is only valid if we have >= 400 bars (~1.5+ years)
+    has_2yr = len(rows) >= 400
+    bt_2yr_pct = full_pct if has_2yr else None
+    bt_2yr_trades = full_trades if has_2yr else None
+    bt_2yr_final = full_final if has_2yr else None
+
+    # Latest signal
     latest_signal = None
     latest_score = None
-
-    for row in rows:
-        sig = (row['signal_synthesis'] or '').lower()
+    for row in reversed(rows):
+        sig = (row.get('signal_synthesis') or '').lower()
         if sig and sig != 'neutral':
             latest_signal = sig
-            latest_score = row['signal_score']
-
-        if state == 'waiting' and sig in ('buy', 'strong_buy'):
-            close_price = row['close'] or 0
-            if close_price > 0 and capital > 0:
-                shares_held = capital / close_price
-                state = 'holding'
-        elif state == 'holding' and sig in ('sell', 'strong_sell'):
-            open_price = row['open'] or 0
-            capital = shares_held * open_price
-            shares_held = 0.0
-            state = 'waiting'
-            trades += 1
-
-    # Final value
-    if state == 'holding' and rows:
-        final = shares_held * (rows[-1]['close'] or 0)
-    else:
-        final = capital
-
-    return_pct = round((final - INITIAL) / INITIAL * 100, 1) if INITIAL > 0 else 0
+            latest_score = row.get('signal_score')
+            break
 
     # Store
     conn = _connect()
@@ -773,16 +809,20 @@ def compute_backtest_stats(symbol):
             conn.execute(
                 "INSERT OR REPLACE INTO stock_stats "
                 "(symbol, backtest_return_pct, backtest_trades, backtest_final, "
-                "latest_signal, latest_score, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
-                (symbol, return_pct, trades, round(final, 2), latest_signal, latest_score)
+                "bt_1yr_return_pct, bt_1yr_trades, bt_1yr_final, "
+                "latest_signal, latest_score, history_bars, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                (symbol, bt_2yr_pct, bt_2yr_trades, bt_2yr_final,
+                 yr1_pct, yr1_trades, yr1_final,
+                 latest_signal, latest_score, len(rows))
             )
             conn.commit()
     finally:
         conn.close()
 
-    logger.info(f"DB: backtest stats for {symbol}: {return_pct}% ({trades} trades)")
-    return return_pct
+    label_2yr = f" | 2yr: {bt_2yr_pct}%" if has_2yr else ""
+    logger.info(f"DB: backtest stats for {symbol}: 1yr: {yr1_pct}% ({yr1_trades} trades){label_2yr}")
+    return yr1_pct
 
 
 def get_stock_stats(symbol):
