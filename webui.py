@@ -615,6 +615,20 @@ def api_compute_indicators(symbol):
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/stock/<symbol>/compute-signals', methods=['POST'])
+@csrf.exempt
+def api_compute_signals(symbol):
+    """Run rule-based signal scoring on a stock's history (no LLM needed)."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: computing signals for {symbol}")
+    try:
+        count = db.compute_signals(symbol)
+        return jsonify({'ok': True, 'bars_scored': count})
+    except Exception as e:
+        logger.error(f"WebUI: error computing signals for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/loop/start', methods=['POST'])
 @csrf.exempt  # JSON API endpoint — CSRF token not applicable
 def api_loop_start():
@@ -727,11 +741,13 @@ def stock_history_page(symbol):
     bars = db.get_stock_history_bars(symbol)
     status = db.get_stock_history_status(symbol)
     ticker = db.get_ticker_by_symbol(symbol)
-    analyzed_count = sum(1 for b in bars if b.get('recommendation'))
-    unanalyzed_count = len(bars) - analyzed_count
+    analyzed_count = sum(1 for b in bars if b.get('recommendation') or b.get('signal_synthesis'))
+    unanalyzed_count = sum(1 for b in bars if not b.get('recommendation') and not b.get('signal_synthesis'))
     has_indicators = any(b.get('sma_10') is not None for b in bars)
+    has_signals = any(b.get('signal_synthesis') is not None for b in bars)
 
     # Backtest simulation: walk oldest→newest
+    # Prefer rule-based signal_synthesis over LLM recommendation
     INITIAL_CAPITAL = 100.0
     capital = INITIAL_CAPITAL
     shares_held = 0.0
@@ -744,7 +760,7 @@ def stock_history_page(symbol):
         bar['bt_shares_sold'] = None
         bar['bt_sale_amount'] = None
         bar['bt_running_total'] = None
-        rec = (bar.get('recommendation') or '').lower()
+        rec = (bar.get('signal_synthesis') or bar.get('recommendation') or '').lower()
 
         if state == 'waiting_to_buy' and rec in ('buy', 'strong_buy'):
             close_price = bar.get('close') or 0
@@ -785,6 +801,7 @@ def stock_history_page(symbol):
         status=status,
         analyzed_count=analyzed_count,
         unanalyzed_count=unanalyzed_count,
+        has_signals=has_signals,
         buy_markers_json=json.dumps(buy_markers),
         sell_markers_json=json.dumps(sell_markers),
         bt_final=bt_final,

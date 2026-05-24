@@ -30,11 +30,14 @@
         </div>
 
         <div style="margin-bottom:16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <button class="btn" id="btn-analyze-history">
-                {% if unanalyzed_count == 0 %}All Analyzed{% else %}Analyze {{ unanalyzed_count }} Bars (Haiku){% endif %}
+            <button class="btn" id="btn-compute-signals" style="background:var(--accent);color:#fff;border:none;">
+                {% if has_signals %}Recompute Signals{% else %}Compute Signals (Rule-Based){% endif %}
             </button>
             <button class="btn btn-sm" id="btn-compute-indicators" style="background:var(--bg-elev);border:1px solid var(--accent);color:var(--accent);">
                 {% if has_indicators %}Recompute Indicators{% else %}Compute Indicators{% endif %}
+            </button>
+            <button class="btn btn-sm" id="btn-analyze-history" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--muted);">
+                {% if unanalyzed_count == 0 %}All Analyzed (Haiku){% else %}Analyze {{ unanalyzed_count }} Bars (Haiku){% endif %}
             </button>
             <span id="analyze-status" class="muted small"></span>
         </div>
@@ -50,7 +53,12 @@
                     <th>Close</th>
                     <th>RSI</th>
                     <th>MACD</th>
-                    <th>Rec</th>
+                    <th>MA</th>
+                    <th>RSI+MACD</th>
+                    <th>BB</th>
+                    <th>Vol</th>
+                    <th>Score</th>
+                    <th>Signal</th>
                     <th>Shares Bought</th>
                     <th>Shares Sold</th>
                     <th>Sale $</th>
@@ -67,7 +75,12 @@
                         <td>${{ "%.2f"|format(bar.close or 0) }}</td>
                         <td class="{% if bar.rsi_14 is not none %}{% if bar.rsi_14 < 30 %}rec-buy{% elif bar.rsi_14 > 70 %}rec-sell{% endif %}{% endif %}" style="font-size:12px;">{% if bar.rsi_14 is not none %}{{ "%.1f"|format(bar.rsi_14) }}{% else %}&mdash;{% endif %}</td>
                         <td style="font-size:12px;">{% if bar.macd_histogram is not none %}<span style="color:{% if bar.macd_histogram > 0 %}var(--success){% else %}var(--danger){% endif %}">{{ "%.2f"|format(bar.macd_histogram) }}</span>{% else %}&mdash;{% endif %}</td>
-                        <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.signal_ma or 'none')|lower }}" style="font-size:11px;">{% if bar.signal_ma and bar.signal_ma != 'neutral' %}{{ bar.signal_ma }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.signal_rsi_macd or 'none')|lower }}" style="font-size:11px;">{% if bar.signal_rsi_macd and bar.signal_rsi_macd != 'neutral' %}{{ bar.signal_rsi_macd }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.signal_bb or 'none')|lower }}" style="font-size:11px;">{% if bar.signal_bb and bar.signal_bb != 'neutral' %}{{ bar.signal_bb }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.signal_volume or 'none')|lower }}" style="font-size:11px;">{% if bar.signal_volume and bar.signal_volume != 'neutral' %}{{ bar.signal_volume }}{% else %}&mdash;{% endif %}</td>
+                        <td style="font-size:12px; font-weight:700; color:{% if bar.signal_score is not none %}{% if bar.signal_score >= 3 %}var(--success){% elif bar.signal_score <= -3 %}var(--danger){% else %}var(--muted){% endif %}{% else %}var(--muted){% endif %}">{% if bar.signal_score is not none %}{{ bar.signal_score }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.signal_synthesis or bar.recommendation or 'none')|lower }}">{% if bar.signal_synthesis and bar.signal_synthesis != 'neutral' %}{{ bar.signal_synthesis }}{% elif bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_sale_amount %}<span style="color:var(--danger)">${{ "%.2f"|format(bar.bt_sale_amount) }}</span>{% else %}&mdash;{% endif %}</td>
@@ -262,6 +275,32 @@
                 .catch(function(err) {
                     btnInd.disabled = false;
                     btnInd.textContent = 'Retry';
+                    status.textContent = 'Error: ' + err;
+                });
+        });
+    }
+
+    // Compute Signals button (rule-based, no LLM)
+    var btnSig = document.getElementById('btn-compute-signals');
+    if (btnSig) {
+        btnSig.addEventListener('click', function() {
+            btnSig.disabled = true;
+            btnSig.innerHTML = '<span class="spinner"></span> Scoring...';
+            fetch('/api/stock/{{ symbol }}/compute-signals', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.ok) {
+                        status.textContent = data.bars_scored + ' bars scored (rule-based)';
+                        setTimeout(function() { window.location.reload(); }, 1000);
+                    } else {
+                        btnSig.disabled = false;
+                        btnSig.textContent = 'Retry Signals';
+                        status.textContent = 'Error: ' + (data.error || 'Unknown');
+                    }
+                })
+                .catch(function(err) {
+                    btnSig.disabled = false;
+                    btnSig.textContent = 'Retry Signals';
                     status.textContent = 'Error: ' + err;
                 });
         });

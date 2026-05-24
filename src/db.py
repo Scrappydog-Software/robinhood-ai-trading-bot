@@ -113,6 +113,14 @@ CREATE TABLE IF NOT EXISTS stock_history (
     vol_sma_20 REAL,
     vol_ratio REAL,
     obv       REAL,
+    signal_ma TEXT,
+    signal_rsi TEXT,
+    signal_macd TEXT,
+    signal_rsi_macd TEXT,
+    signal_bb TEXT,
+    signal_volume TEXT,
+    signal_synthesis TEXT,
+    signal_score INTEGER,
     loaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (symbol, bar_date)
 );
@@ -137,6 +145,14 @@ ALTER TABLE stock_history ADD COLUMN bb_width REAL;
 ALTER TABLE stock_history ADD COLUMN vol_sma_20 REAL;
 ALTER TABLE stock_history ADD COLUMN vol_ratio REAL;
 ALTER TABLE stock_history ADD COLUMN obv REAL;
+ALTER TABLE stock_history ADD COLUMN signal_ma TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_rsi TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_macd TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_rsi_macd TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_bb TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_volume TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_synthesis TEXT;
+ALTER TABLE stock_history ADD COLUMN signal_score INTEGER;
 """
 
 
@@ -365,14 +381,16 @@ def get_stock_history_status(symbol):
 
 
 def get_stock_history_bars(symbol):
-    """Return all daily OHLCV bars + indicators for a symbol, oldest first."""
+    """Return all daily OHLCV bars + indicators + signals for a symbol, oldest first."""
     conn = _connect()
     try:
         rows = conn.execute(
             "SELECT bar_date, open, high, low, close, volume, vwap, transactions, "
             "recommendation, sma_10, sma_20, sma_50, sma_200, ema_12, ema_26, "
             "rsi_14, macd_line, macd_signal, macd_histogram, "
-            "bb_upper, bb_lower, bb_width, vol_sma_20, vol_ratio, obv "
+            "bb_upper, bb_lower, bb_width, vol_sma_20, vol_ratio, obv, "
+            "signal_ma, signal_rsi, signal_macd, signal_rsi_macd, "
+            "signal_bb, signal_volume, signal_synthesis, signal_score "
             "FROM stock_history WHERE symbol = ? ORDER BY bar_date ASC",
             (symbol.upper(),)
         ).fetchall()
@@ -576,8 +594,11 @@ def compute_indicators(symbol):
     finally:
         conn.close()
 
-    from src.utils import logger
     logger.info(f"DB: computed indicators for {symbol} ({n} bars)")
+
+    # Also compute rule-based signals now that indicators are fresh
+    compute_signals(symbol)
+
     return n
 
 
@@ -610,6 +631,67 @@ def get_ticker_by_symbol(symbol):
     if row is None:
         return None
     return dict(row)
+
+
+def compute_signals(symbol):
+    """Run the rule-based signal scoring engine on a symbol's history.
+
+    Reads all bars with indicators, computes 7-section signal scores,
+    and writes results (signal_ma through signal_score) back to the DB.
+    Replaces the LLM-based recommendation with pure Python math.
+
+    Returns the number of bars scored.
+    """
+    from src.signals import compute_signals_for_bars
+
+    symbol = symbol.upper()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, open, high, low, close, volume, vwap, "
+            "sma_10, sma_20, sma_50, sma_200, ema_12, ema_26, "
+            "rsi_14, macd_line, macd_signal, macd_histogram, "
+            "bb_upper, bb_lower, bb_width, vol_sma_20, vol_ratio, obv "
+            "FROM stock_history WHERE symbol = ? ORDER BY bar_date ASC",
+            (symbol,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return 0
+
+    bars = [dict(r) for r in rows]
+    bars = compute_signals_for_bars(bars)
+
+    conn = _connect()
+    try:
+        with _write_lock:
+            for bar in bars:
+                conn.execute(
+                    "UPDATE stock_history SET "
+                    "signal_ma=?, signal_rsi=?, signal_macd=?, signal_rsi_macd=?, "
+                    "signal_bb=?, signal_volume=?, signal_synthesis=?, signal_score=? "
+                    "WHERE symbol=? AND bar_date=?",
+                    (
+                        bar.get('signal_ma'),
+                        bar.get('signal_rsi'),
+                        bar.get('signal_macd'),
+                        bar.get('signal_rsi_macd'),
+                        bar.get('signal_bb'),
+                        bar.get('signal_volume'),
+                        bar.get('signal_synthesis'),
+                        bar.get('signal_score'),
+                        symbol,
+                        bar['bar_date'],
+                    )
+                )
+            conn.commit()
+    finally:
+        conn.close()
+
+    logger.info(f"DB: computed signals for {symbol} ({len(bars)} bars)")
+    return len(bars)
 
 
 def get_distinct_values(column):
