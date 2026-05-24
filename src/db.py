@@ -626,3 +626,35 @@ def get_distinct_values(column):
     finally:
         conn.close()
     return [r[0] for r in rows]
+
+
+def get_latest_bar_date(symbol):
+    """Return the most recent bar_date for a symbol, or None if no history."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT MAX(bar_date) FROM stock_history WHERE symbol = ?",
+            (symbol.upper(),)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row and row[0] else None
+
+
+def get_daily_closes(symbol, limit=200):
+    """Return the last N daily close prices for a symbol (oldest first).
+
+    Used for computing moving averages from cached history without
+    re-fetching from the API.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT close FROM stock_history WHERE symbol = ? AND close IS NOT NULL "
+            "ORDER BY bar_date DESC LIMIT ?",
+            (symbol.upper(), limit)
+        ).fetchall()
+    finally:
+        conn.close()
+    # Reverse so oldest is first
+    return [r['close'] for r in reversed(rows)]

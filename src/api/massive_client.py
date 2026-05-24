@@ -356,10 +356,44 @@ def compute_moving_averages(closes):
 def enrich_stock_data(symbol, stock_data):
     """Enrich stock data with RSI, VWAP, and moving averages from Massive API.
 
-    Fetches intraday bars (for RSI + VWAP) and daily bars (for MAs).
+    Uses cached daily history from SQLite when available (skips re-fetching).
+    Stores any newly fetched bars to stock_history for future use.
     Modifies stock_data in place and returns it.
     """
-    # Intraday data for RSI and VWAP (today's 5-minute bars)
+    from src import db
+
+    today_str = datetime.now().strftime('%Y-%m-%d')
+
+    # --- Daily bars for moving averages ---
+    # Check if we already have recent history cached in SQLite
+    latest_bar = db.get_latest_bar_date(symbol)
+    daily_closes = None
+
+    if latest_bar and latest_bar >= (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d'):
+        # Use cached data — no API call needed
+        daily_closes = db.get_daily_closes(symbol, limit=200)
+        logger.info(f"  {symbol}: using {len(daily_closes)} cached daily bars (latest: {latest_bar})")
+    else:
+        # Fetch from API and store
+        try:
+            logger.info(f"  {symbol}: fetching daily bars from API...")
+            daily = fetch_daily_bars(symbol, days=365)
+            logger.info(f"  {symbol}: got {len(daily)} daily bars, storing to DB...")
+            if daily:
+                db.upsert_stock_history(symbol, daily)
+                db.compute_indicators(symbol)
+                daily_closes = [b['close'] for b in daily if b.get('close')]
+        except Exception as e:
+            logger.error(f"  {symbol}: error on daily bars: {e}")
+
+    if daily_closes:
+        ma = compute_moving_averages(daily_closes)
+        if ma.get('50_day_mavg_price'):
+            stock_data['50_day_mavg_price'] = ma['50_day_mavg_price']
+        if ma.get('200_day_mavg_price'):
+            stock_data['200_day_mavg_price'] = ma['200_day_mavg_price']
+
+    # --- Intraday bars for RSI and VWAP ---
     try:
         logger.info(f"  {symbol}: fetching intraday bars...")
         intraday = fetch_intraday_bars(symbol, interval="5", span_days=1)
@@ -375,20 +409,5 @@ def enrich_stock_data(symbol, stock_data):
                 stock_data['vwap'] = vwap
     except Exception as e:
         logger.error(f"  {symbol}: error on intraday: {e}")
-
-    # Daily data for moving averages (need 200+ days)
-    try:
-        logger.info(f"  {symbol}: fetching daily bars...")
-        daily = fetch_daily_bars(symbol, days=365)
-        logger.info(f"  {symbol}: got {len(daily)} daily bars")
-        if daily:
-            daily_closes = [b['close'] for b in daily if b.get('close')]
-            ma = compute_moving_averages(daily_closes)
-            if ma.get('50_day_mavg_price'):
-                stock_data['50_day_mavg_price'] = ma['50_day_mavg_price']
-            if ma.get('200_day_mavg_price'):
-                stock_data['200_day_mavg_price'] = ma['200_day_mavg_price']
-    except Exception as e:
-        logger.error(f"  {symbol}: error on daily bars: {e}")
 
     return stock_data
