@@ -23,7 +23,7 @@ def _score_to_label(score):
         return 'strong_sell'
     elif score <= -1:
         return 'sell'
-    return 'neutral'
+    return 'hold'
 
 
 def _synthesis_label(total_score):
@@ -36,7 +36,7 @@ def _synthesis_label(total_score):
         return 'strong_sell'
     elif total_score <= -3:
         return 'sell'
-    return 'neutral'
+    return 'hold'
 
 
 def _crossed_above(current, previous, threshold):
@@ -393,13 +393,13 @@ def compute_signals_for_bars(bars):
     for i in range(len(bars)):
         # Need at least some history context for meaningful signals
         if i < 14:
-            bars[i]['signal_ma'] = 'neutral'
-            bars[i]['signal_rsi'] = 'neutral'
-            bars[i]['signal_macd'] = 'neutral'
-            bars[i]['signal_rsi_macd'] = 'neutral'
-            bars[i]['signal_bb'] = 'neutral'
-            bars[i]['signal_volume'] = 'neutral'
-            bars[i]['signal_synthesis'] = 'neutral'
+            bars[i]['signal_ma'] = 'hold'
+            bars[i]['signal_rsi'] = 'hold'
+            bars[i]['signal_macd'] = 'hold'
+            bars[i]['signal_rsi_macd'] = 'hold'
+            bars[i]['signal_bb'] = 'hold'
+            bars[i]['signal_volume'] = 'hold'
+            bars[i]['signal_synthesis'] = 'hold'
             bars[i]['signal_score'] = 0
             continue
 
