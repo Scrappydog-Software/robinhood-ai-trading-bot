@@ -362,21 +362,22 @@ def enrich_stock_data(symbol, stock_data):
     """
     from src import db
 
-    today_str = datetime.now().strftime('%Y-%m-%d')
-
     # --- Daily bars for moving averages ---
-    # Check if we already have recent history cached in SQLite
+    # Check if we have sufficient cached history (>= 400 bars = ~2 years)
+    status = db.get_stock_history_status(symbol)
     latest_bar = db.get_latest_bar_date(symbol)
     daily_closes = None
+    has_enough = status['has_data'] and status['bar_count'] >= 400
+    is_recent = latest_bar and latest_bar >= (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
 
-    if latest_bar and latest_bar >= (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d'):
+    if has_enough and is_recent:
         # Use cached data — no API call needed
         daily_closes = db.get_daily_closes(symbol, limit=200)
         logger.info(f"  {symbol}: using {len(daily_closes)} cached daily bars (latest: {latest_bar})")
     else:
-        # Fetch from API and store
+        # Fetch full 2-year history from API and store
         try:
-            logger.info(f"  {symbol}: fetching 2-year daily bars from API...")
+            logger.info(f"  {symbol}: fetching 2-year daily bars from API (have {status['bar_count']} bars)...")
             daily = fetch_daily_bars(symbol, days=730)
             logger.info(f"  {symbol}: got {len(daily)} daily bars, storing to DB...")
             if daily:

@@ -75,24 +75,28 @@ def _ensure_signals_for_all_stocks():
 
         logger.info(f"App: {len(missing)} stocks need history/signals: {', '.join(missing[:10])}{'...' if len(missing) > 10 else ''}")
 
-        for i, symbol in enumerate(missing, 1):
+        # Process all stocks — reload history if less than 2 years (< 400 bars)
+        for i, symbol in enumerate(all_symbols, 1):
             try:
-                logger.info(f"App: loading history for {symbol} ({i}/{len(missing)})...")
                 status = db.get_stock_history_status(symbol)
-                if not status['has_data']:
+                needs_load = not status['has_data'] or status['bar_count'] < 400
+
+                if needs_load:
+                    logger.info(f"App: loading 2-year history for {symbol} ({i}/{len(all_symbols)}, have {status['bar_count']} bars)...")
                     bars = massive_client.fetch_daily_bars(symbol, days=730)
                     if bars:
                         db.upsert_stock_history(symbol, bars)
                         db.compute_indicators(symbol)
                     else:
                         logger.error(f"App: no data returned for {symbol}")
-                else:
+                elif symbol in missing:
+                    logger.info(f"App: computing signals for {symbol} ({i}/{len(all_symbols)})...")
                     db.compute_indicators(symbol)
             except Exception as e:
                 logger.error(f"App: error processing {symbol}: {e}")
                 continue
 
-        logger.info(f"App: signal initialization complete for {len(missing)} stocks")
+        logger.info(f"App: signal initialization complete for {len(all_symbols)} stocks")
     except Exception as e:
         logger.error(f"App: error in signal initialization: {e}")
 
