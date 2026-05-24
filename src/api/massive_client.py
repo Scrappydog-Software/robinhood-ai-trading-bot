@@ -11,8 +11,11 @@ This module is the exclusive source for market data (quotes, historical OHLCV,
 indicators). Robinhood is used only for account positions and watchlists.
 """
 
+import time
 from datetime import datetime, timedelta
 
+import urllib3
+from urllib3.util.retry import Retry
 from massive import RESTClient
 
 from ..utils import logger
@@ -25,13 +28,29 @@ except NameError:
     MASSIVE_API_KEY = None
 
 # ---------------------------------------------------------------------------
+# Rate limiting / retry configuration
+# ---------------------------------------------------------------------------
+# Despite "unlimited" plan marketing, the API enforces an undocumented burst
+# limit that triggers 429s on rapid successive calls. The SDK's default
+# (3 retries, 0.1 backoff_factor) is insufficient.
+#
+# Strategy: exponential backoff with 10 retries and 1.0 backoff_factor
+# yields delays of [0, 2, 4, 8, 16, 32, 64, 128, 256, 512] seconds.
+# Combined with a per-call minimum delay to avoid bursting.
+
+_RETRIES = 10
+_BACKOFF_FACTOR = 1.0
+_MIN_CALL_DELAY = 0.12  # seconds between API calls (proactive throttle)
+_last_call_time = 0.0
+
+# ---------------------------------------------------------------------------
 # Lazy singleton
 # ---------------------------------------------------------------------------
 _client = None
 
 
 def get_client():
-    """Return a lazy-initialised RESTClient singleton.
+    """Return a lazy-initialised RESTClient singleton with robust retry config.
 
     Raises RuntimeError if MASSIVE_API_KEY is not configured.
     """
@@ -42,8 +61,30 @@ def get_client():
                 "MASSIVE_API_KEY is not set in config.py. "
                 "Add it to config.py (see config.py.example)."
             )
-        _client = RESTClient(api_key=MASSIVE_API_KEY)
+        _client = RESTClient(api_key=MASSIVE_API_KEY, retries=_RETRIES)
+        # Override the internal urllib3 PoolManager with stronger backoff
+        retry_strategy = Retry(
+            total=_RETRIES,
+            backoff_factor=_BACKOFF_FACTOR,
+            status_forcelist=[413, 429, 499, 500, 502, 503, 504],
+            respect_retry_after_header=True,
+        )
+        _client.client = urllib3.PoolManager(
+            num_pools=10,
+            headers=_client.client.headers,
+            retries=retry_strategy,
+            timeout=urllib3.Timeout(connect=10.0, read=30.0),
+        )
     return _client
+
+
+def _throttle():
+    """Enforce minimum delay between API calls to avoid burst 429s."""
+    global _last_call_time
+    elapsed = time.time() - _last_call_time
+    if elapsed < _MIN_CALL_DELAY:
+        time.sleep(_MIN_CALL_DELAY - elapsed)
+    _last_call_time = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +99,7 @@ def fetch_all_tickers(limit=1000):
     maximum (1000) to minimise API calls.
     """
     client = get_client()
+    _throttle()
     logger.info(f"MassiveClient: fetching all tickers (page size={limit})...")
     return client.list_tickers(limit=limit)
 
@@ -68,6 +110,7 @@ def fetch_ticker_details(ticker):
     Returns a TickerDetails object.
     """
     client = get_client()
+    _throttle()
     logger.debug(f"MassiveClient: fetching details for {ticker}")
     return client.get_ticker_details(ticker)
 
@@ -78,10 +121,11 @@ def fetch_previous_close(symbol):
     Returns a dict with: open, high, low, close, volume, vwap, or None on error.
     """
     client = get_client()
+    _throttle()
     try:
-        resp = client.get_previous_close(symbol)
-        if resp and hasattr(resp, 'results') and resp.results:
-            bar = resp.results[0] if isinstance(resp.results, list) else resp.results
+        aggs = client.get_previous_close_agg(symbol)
+        if aggs and isinstance(aggs, list) and len(aggs) > 0:
+            bar = aggs[0]
             return {
                 'open': getattr(bar, 'open', None),
                 'high': getattr(bar, 'high', None),
@@ -90,16 +134,15 @@ def fetch_previous_close(symbol):
                 'volume': getattr(bar, 'volume', None),
                 'vwap': getattr(bar, 'vwap', None),
             }
-        # Some SDK versions return a list directly
-        if isinstance(resp, list) and len(resp) > 0:
-            bar = resp[0]
+        # Some SDK versions return an iterator or single object
+        if aggs and hasattr(aggs, 'close'):
             return {
-                'open': getattr(bar, 'open', None),
-                'high': getattr(bar, 'high', None),
-                'low': getattr(bar, 'low', None),
-                'close': getattr(bar, 'close', None),
-                'volume': getattr(bar, 'volume', None),
-                'vwap': getattr(bar, 'vwap', None),
+                'open': getattr(aggs, 'open', None),
+                'high': getattr(aggs, 'high', None),
+                'low': getattr(aggs, 'low', None),
+                'close': getattr(aggs, 'close', None),
+                'volume': getattr(aggs, 'volume', None),
+                'vwap': getattr(aggs, 'vwap', None),
             }
     except Exception as e:
         logger.error(f"MassiveClient: error fetching previous close for {symbol}: {e}")
@@ -109,21 +152,17 @@ def fetch_previous_close(symbol):
 def fetch_snapshot(symbol):
     """Fetch a real-time snapshot for a symbol (current price, day stats).
 
-    Returns a dict with: price, today_change, today_change_pct, day_open,
-    day_high, day_low, day_close, day_volume, day_vwap, prev_close, or None.
+    Requires Starter plan or above. Returns None gracefully if plan
+    doesn't support snapshots.
     """
     client = get_client()
+    _throttle()
     try:
         snap = client.get_snapshot_ticker("stocks", symbol)
         if not snap:
             return None
 
         result = {}
-        # Current price from ticker data
-        if hasattr(snap, 'ticker'):
-            ticker_data = snap.ticker if not isinstance(snap.ticker, str) else snap
-            result['price'] = getattr(ticker_data, 'lastTrade', {}).get('p') if hasattr(ticker_data, 'lastTrade') else None
-
         # Day bar
         if hasattr(snap, 'day') and snap.day:
             result['day_open'] = getattr(snap.day, 'o', None) or getattr(snap.day, 'open', None)
@@ -143,20 +182,24 @@ def fetch_snapshot(symbol):
         if hasattr(snap, 'todaysChangePerc'):
             result['today_change_pct'] = snap.todaysChangePerc
 
-        # Fallback price from day close or prev close
-        if not result.get('price'):
-            result['price'] = result.get('day_close') or result.get('prev_close')
+        # Price: prefer day close, then prev close
+        result['price'] = result.get('day_close') or result.get('prev_close')
 
         return result if result.get('price') else None
     except Exception as e:
-        logger.error(f"MassiveClient: error fetching snapshot for {symbol}: {e}")
+        err_str = str(e)
+        if 'NOT_AUTHORIZED' in err_str or 'upgrade your plan' in err_str:
+            logger.debug(f"MassiveClient: snapshots not available on current plan for {symbol}")
+        else:
+            logger.error(f"MassiveClient: error fetching snapshot for {symbol}: {e}")
     return None
 
 
 def fetch_current_price(symbol):
     """Get the current/latest price for a symbol.
 
-    Tries snapshot first, falls back to previous close.
+    Tries snapshot first (if plan supports it), then falls back to
+    previous close aggregate.
     Returns float price or None.
     """
     snap = fetch_snapshot(symbol)
@@ -180,6 +223,7 @@ def fetch_daily_bars(symbol, days=365):
     Returns a list of dicts with: bar_date, open, high, low, close, volume, vwap
     """
     client = get_client()
+    _throttle()
     today = datetime.now()
     to_date = today.strftime('%Y-%m-%d')
     from_date = (today - timedelta(days=days)).strftime('%Y-%m-%d')
@@ -215,6 +259,7 @@ def fetch_intraday_bars(symbol, interval="5", span_days=1):
     Returns a list of dicts with: timestamp, open, high, low, close, volume, vwap
     """
     client = get_client()
+    _throttle()
     today = datetime.now()
     to_date = today.strftime('%Y-%m-%d')
     from_date = (today - timedelta(days=span_days)).strftime('%Y-%m-%d')
