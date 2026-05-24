@@ -751,10 +751,10 @@ def stock_history_page(symbol):
     bars = db.get_stock_history_bars(symbol)
     status = db.get_stock_history_status(symbol)
     ticker = db.get_ticker_by_symbol(symbol)
-    analyzed_count = sum(1 for b in bars if b.get('recommendation') or b.get('signal_synthesis'))
-    unanalyzed_count = sum(1 for b in bars if not b.get('recommendation') and not b.get('signal_synthesis'))
+    analyzed_count = sum(1 for b in bars if b.get('recommendation'))
+    unanalyzed_count = len(bars) - analyzed_count
     has_indicators = any(b.get('sma_10') is not None for b in bars)
-    has_signals = any(b.get('signal_synthesis') is not None for b in bars)
+    has_signals = any(b.get('signal_score') is not None for b in bars)
 
     # Backtest simulation: walk oldest→newest
     # Use signal_synthesis exclusively when signals have been computed
@@ -770,12 +770,7 @@ def stock_history_page(symbol):
         bar['bt_shares_sold'] = None
         bar['bt_sale_amount'] = None
         bar['bt_running_total'] = None
-        # Use signal_synthesis when available; only fall back to recommendation
-        # if NO signals have been computed at all for this stock
-        if has_signals:
-            rec = (bar.get('signal_synthesis') or '').lower()
-        else:
-            rec = (bar.get('recommendation') or '').lower()
+        rec = (bar.get('recommendation') or '').lower()
 
         if state == 'waiting_to_buy' and rec in ('buy', 'strong_buy'):
             close_price = bar.get('close') or 0

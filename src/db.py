@@ -690,7 +690,8 @@ def compute_signals(symbol):
                 conn.execute(
                     "UPDATE stock_history SET "
                     "signal_ma=?, signal_rsi=?, signal_macd=?, signal_rsi_macd=?, "
-                    "signal_bb=?, signal_volume=?, signal_synthesis=?, signal_score=? "
+                    "signal_bb=?, signal_volume=?, signal_synthesis=?, signal_score=?, "
+                    "recommendation=? "
                     "WHERE symbol=? AND bar_date=?",
                     (
                         bar.get('signal_ma'),
@@ -701,6 +702,7 @@ def compute_signals(symbol):
                         bar.get('signal_volume'),
                         bar.get('signal_synthesis'),
                         bar.get('signal_score'),
+                        bar.get('signal_synthesis'),
                         symbol,
                         bar['bar_date'],
                     )
