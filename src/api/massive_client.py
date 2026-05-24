@@ -34,13 +34,13 @@ except NameError:
 # limit that triggers 429s on rapid successive calls. The SDK's default
 # (3 retries, 0.1 backoff_factor) is insufficient.
 #
-# Strategy: exponential backoff with 10 retries and 1.0 backoff_factor
-# yields delays of [0, 2, 4, 8, 16, 32, 64, 128, 256, 512] seconds.
+# Strategy: exponential backoff with 5 retries and 2.0 backoff_factor
+# yields delays of [0, 4, 8, 16, 32] seconds (max ~60s total wait per call).
 # Combined with a per-call minimum delay to avoid bursting.
 
-_RETRIES = 10
-_BACKOFF_FACTOR = 1.0
-_MIN_CALL_DELAY = 0.12  # seconds between API calls (proactive throttle)
+_RETRIES = 5
+_BACKOFF_FACTOR = 2.0
+_MIN_CALL_DELAY = 0.25  # seconds between API calls (proactive throttle)
 _last_call_time = 0.0
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,7 @@ def get_client():
             backoff_factor=_BACKOFF_FACTOR,
             status_forcelist=[413, 429, 499, 500, 502, 503, 504],
             respect_retry_after_header=True,
+            backoff_max=30,  # cap individual retry delay at 30s
         )
         _client.client = urllib3.PoolManager(
             num_pools=10,
@@ -351,7 +352,9 @@ def enrich_stock_data(symbol, stock_data):
     """
     # Intraday data for RSI and VWAP (today's 5-minute bars)
     try:
+        logger.debug(f"MassiveClient: fetching intraday bars for {symbol}...")
         intraday = fetch_intraday_bars(symbol, interval="5", span_days=1)
+        logger.debug(f"MassiveClient: got {len(intraday)} intraday bars for {symbol}")
         if intraday:
             intraday_closes = [b['close'] for b in intraday if b.get('close')]
             if len(intraday_closes) >= 15:
@@ -366,7 +369,9 @@ def enrich_stock_data(symbol, stock_data):
 
     # Daily data for moving averages (need 200+ days)
     try:
+        logger.debug(f"MassiveClient: fetching daily bars for {symbol}...")
         daily = fetch_daily_bars(symbol, days=365)
+        logger.debug(f"MassiveClient: got {len(daily)} daily bars for {symbol}")
         if daily:
             daily_closes = [b['close'] for b in daily if b.get('close')]
             ma = compute_moving_averages(daily_closes)

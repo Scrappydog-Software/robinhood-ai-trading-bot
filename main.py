@@ -247,7 +247,9 @@ def trading_bot(market_open=None):
 
     logger.info("Prepare portfolio stocks for AI analysis...")
     portfolio_overview = {}
-    for symbol, stock_data in portfolio_stocks.items():
+    portfolio_symbols = list(portfolio_stocks.keys())
+    for i, (symbol, stock_data) in enumerate(portfolio_stocks.items(), 1):
+        logger.info(f"Enriching portfolio stock {i}/{len(portfolio_symbols)}: {symbol}...")
         portfolio_overview[symbol] = robinhood.extract_my_stocks_data(stock_data)
         # Market data from Massive API
         massive_client.enrich_stock_data(symbol, portfolio_overview[symbol])
@@ -282,8 +284,9 @@ def trading_bot(market_open=None):
         logger.info(f"Watchlist stocks to proceed: {', '.join([stock['symbol'] for stock in watchlist_stocks])}")
 
         logger.info("Prepare watchlist overview for AI analysis...")
-        for stock_data in watchlist_stocks:
+        for i, stock_data in enumerate(watchlist_stocks, 1):
             symbol = stock_data['symbol']
+            logger.info(f"Enriching watchlist stock {i}/{len(watchlist_stocks)}: {symbol}...")
             try:
                 watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
                 # Get current price from Massive API
