@@ -177,6 +177,7 @@ def _build_portfolio_view():
         return [], str(e), 0.0
 
     decisions_map = _load_decisions_map()
+    all_stats = db.get_all_stock_stats()
     rows = []
     total_value = 0.0
     for symbol, data in (holdings or {}).items():
@@ -186,13 +187,16 @@ def _build_portfolio_view():
             avg = float(data.get('average_buy_price', 0) or 0)
             position_value = price * qty
             total_value += position_value
+            # Prefer rule-based signal from stock_stats; fall back to LLM decision
+            stats = all_stats.get(symbol)
+            rec = (stats.get('latest_signal') if stats else None) or decisions_map.get(symbol)
             rows.append({
                 'symbol': symbol,
                 'quantity': round(qty, 6),
                 'current_price': round(price, 2),
                 'avg_buy_price': round(avg, 2),
                 'position_value': round(position_value, 2),
-                'recommendation': decisions_map.get(symbol),
+                'recommendation': rec,
             })
         except Exception as e:
             logger.error(f"Error parsing holding {symbol}: {e}")
