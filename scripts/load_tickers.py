@@ -10,7 +10,6 @@ iterator and batches inserts (1000 rows per batch) for efficiency.
 
 import os
 import sys
-import time
 
 # Ensure the project root is on sys.path so ``from config import *`` and
 # ``from src.…`` imports work when running this script directly.
@@ -52,8 +51,6 @@ def load_tickers():
     """Fetch all tickers from Massive and upsert into SQLite."""
     init_db()
 
-    RATE_LIMIT_DELAY = 13  # seconds between pages — Massive API allows 5 calls/min
-
     logger.info("LoadTickers: fetching tickers from Massive API...")
     tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
 
@@ -64,9 +61,8 @@ def load_tickers():
         if len(batch) >= BATCH_SIZE:
             count = upsert_tickers(batch)
             total += count
-            logger.info(f"LoadTickers: upserted batch ({total} total so far), sleeping {RATE_LIMIT_DELAY}s for rate limit...")
+            logger.info(f"LoadTickers: upserted batch ({total} total so far)...")
             batch = []
-            time.sleep(RATE_LIMIT_DELAY)
 
     # Flush remaining
     if batch:
