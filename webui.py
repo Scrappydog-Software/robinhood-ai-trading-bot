@@ -12,9 +12,8 @@ URL:             http://127.0.0.1:5001
 import asyncio
 import json
 import os
-import time
 import warnings
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
 from flask_wtf.csrf import CSRFProtect
@@ -439,15 +438,16 @@ def api_stock_detail(symbol):
     symbol = symbol.upper()
     result = {'symbol': symbol}
 
-    # --- Robinhood data (portfolio position) ---
+    # --- Position data from Robinhood + price from Massive API ---
     rh_data = None
     try:
         holdings = robinhood.get_portfolio_stocks()
         if holdings and symbol in holdings:
             stock = holdings[symbol]
-            price = float(stock.get('price', 0) or 0)
             qty = float(stock.get('quantity', 0) or 0)
             avg = float(stock.get('average_buy_price', 0) or 0)
+            # Get current price from Massive API
+            price = massive_client.fetch_current_price(symbol) or float(stock.get('price', 0) or 0)
             rh_data = {
                 'current_price': round(price, 2),
                 'quantity': round(qty, 6),
@@ -455,22 +455,17 @@ def api_stock_detail(symbol):
                 'position_value': round(price * qty, 2),
             }
         else:
-            # Not in portfolio — try to get current price via quote
-            try:
-                quote = robinhood.rh_run_with_retries(
-                    robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
-                )
-                if quote and isinstance(quote, list) and quote[0]:
-                    rh_data = {
-                        'current_price': round(float(quote[0]), 2),
-                        'quantity': 0,
-                        'avg_buy_price': 0,
-                        'position_value': 0,
-                    }
-            except Exception:
-                pass
+            # Not in portfolio — get current price from Massive API
+            price = massive_client.fetch_current_price(symbol)
+            if price:
+                rh_data = {
+                    'current_price': round(price, 2),
+                    'quantity': 0,
+                    'avg_buy_price': 0,
+                    'position_value': 0,
+                }
     except Exception as e:
-        logger.error(f"WebUI: api_stock_detail error fetching Robinhood data for {symbol}: {e}")
+        logger.error(f"WebUI: api_stock_detail error fetching data for {symbol}: {e}")
     result['robinhood'] = rh_data
 
     # --- AI decision + rationale ---
@@ -501,30 +496,28 @@ def api_stock_analyze(symbol):
     try:
         account_info = robinhood.get_account_info()
 
-        logger.info(f"WebUI: fetching Robinhood data for {symbol}...")
-        historical_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-        historical_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-        ratings_data = robinhood.get_ratings(symbol)
-
+        # Position data from Robinhood
         holdings = robinhood.get_portfolio_stocks()
         if holdings and symbol in holdings:
             stock_data = robinhood.extract_my_stocks_data(holdings[symbol])
         else:
-            price_list = robinhood.rh_run_with_retries(
-                robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
-            )
-            price = float(price_list[0]) if price_list and price_list[0] else 0
             stock_data = {
-                'current_price': round(price, 2),
+                'current_price': 0,
                 'my_quantity': 0,
                 'my_average_buy_price': 0,
             }
 
-        stock_data = robinhood.enrich_with_rsi(stock_data, historical_day, symbol)
-        stock_data = robinhood.enrich_with_vwap(stock_data, historical_day, symbol)
-        stock_data = robinhood.enrich_with_moving_averages(stock_data, historical_year, symbol)
+        # Current price and market data from Massive API
+        logger.info(f"WebUI: fetching market data from Massive API for {symbol}...")
+        price = massive_client.fetch_current_price(symbol)
+        if price:
+            stock_data['current_price'] = round(price, 2)
+        massive_client.enrich_stock_data(symbol, stock_data)
+
+        # Analyst ratings from Robinhood (account-specific)
+        ratings_data = robinhood.get_ratings(symbol)
         stock_data = robinhood.enrich_with_analyst_ratings(stock_data, ratings_data)
-        logger.info(f"WebUI: Robinhood data enriched for {symbol}, sending to Claude...")
+        logger.info(f"WebUI: market data enriched for {symbol}, sending to Claude...")
 
         prompt = (
             f"Analyze this single stock and provide a buy, sell, or hold recommendation.\n\n"
@@ -584,33 +577,18 @@ def api_stock_load_history(symbol):
     logger.info(f"WebUI: loading 2-year history for {symbol}")
 
     try:
-        today = datetime.now()
-        to_date = today.strftime('%Y-%m-%d')
-        from_date = (today - timedelta(days=730)).strftime('%Y-%m-%d')
-
-        client = massive_client.get_client()
-        aggs = client.get_aggs(symbol, 1, "day", from_date, to_date, limit=50000)
-
-        bars = []
-        for agg in aggs:
-            bar_date = datetime.fromtimestamp(agg.timestamp / 1000).strftime('%Y-%m-%d')
-            bars.append({
-                'bar_date': bar_date,
-                'open': getattr(agg, 'open', None),
-                'high': getattr(agg, 'high', None),
-                'low': getattr(agg, 'low', None),
-                'close': getattr(agg, 'close', None),
-                'volume': getattr(agg, 'volume', None),
-                'vwap': getattr(agg, 'vwap', None),
-                'transactions': getattr(agg, 'transactions', None),
-            })
+        bars = massive_client.fetch_daily_bars(symbol, days=730)
+        if not bars:
+            return jsonify({'ok': False, 'error': f'No data returned for {symbol}'}), 404
 
         bars_loaded = db.upsert_stock_history(symbol, bars)
-        logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol} ({from_date} to {to_date})")
+        logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol}")
 
         indicators_computed = db.compute_indicators(symbol)
         logger.info(f"WebUI: computed indicators for {symbol} ({indicators_computed} bars)")
 
+        from_date = bars[0]['bar_date'] if bars else '?'
+        to_date = bars[-1]['bar_date'] if bars else '?'
         return jsonify({
             'ok': True,
             'bars_loaded': bars_loaded,
@@ -899,8 +877,6 @@ def api_tickers_load():
             'source_feed':          getattr(t, 'source_feed', None),
         }
 
-    RATE_LIMIT_DELAY = 13  # seconds between pages — Massive API allows 5 calls/min
-
     try:
         tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
         batch = []
@@ -910,9 +886,8 @@ def api_tickers_load():
             if len(batch) >= BATCH_SIZE:
                 count = db.upsert_tickers(batch)
                 total += count
-                logger.info(f"WebUI: loaded {total} tickers so far, sleeping {RATE_LIMIT_DELAY}s for rate limit...")
+                logger.info(f"WebUI: loaded {total} tickers so far...")
                 batch = []
-                time.sleep(RATE_LIMIT_DELAY)
         if batch:
             count = db.upsert_tickers(batch)
             total += count

@@ -14,6 +14,7 @@ except NameError:
 
 from src.api import robinhood
 from src.api import claude
+from src.api import massive_client
 from src import db
 from src.state import trading_state
 from src.utils import logger
@@ -247,13 +248,11 @@ def trading_bot(market_open=None):
     logger.info("Prepare portfolio stocks for AI analysis...")
     portfolio_overview = {}
     for symbol, stock_data in portfolio_stocks.items():
-        historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-        historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-        ratings_data = robinhood.get_ratings(symbol)
         portfolio_overview[symbol] = robinhood.extract_my_stocks_data(stock_data)
-        portfolio_overview[symbol] = robinhood.enrich_with_rsi(portfolio_overview[symbol], historical_data_day, symbol)
-        portfolio_overview[symbol] = robinhood.enrich_with_vwap(portfolio_overview[symbol], historical_data_day, symbol)
-        portfolio_overview[symbol] = robinhood.enrich_with_moving_averages(portfolio_overview[symbol], historical_data_year, symbol)
+        # Market data from Massive API
+        massive_client.enrich_stock_data(symbol, portfolio_overview[symbol])
+        # Account-specific data from Robinhood
+        ratings_data = robinhood.get_ratings(symbol)
         portfolio_overview[symbol] = robinhood.enrich_with_analyst_ratings(portfolio_overview[symbol], ratings_data)
         portfolio_overview[symbol] = robinhood.enrich_with_pdt_restrictions(portfolio_overview[symbol], symbol)
 
@@ -286,13 +285,15 @@ def trading_bot(market_open=None):
         for stock_data in watchlist_stocks:
             symbol = stock_data['symbol']
             try:
-                historical_data_day = robinhood.get_historical_data(symbol, interval="5minute", span="day")
-                historical_data_year = robinhood.get_historical_data(symbol, interval="day", span="year")
-                ratings_data = robinhood.get_ratings(symbol)
                 watchlist_overview[symbol] = robinhood.extract_watchlist_data(stock_data)
-                watchlist_overview[symbol] = robinhood.enrich_with_rsi(watchlist_overview[symbol], historical_data_day, symbol)
-                watchlist_overview[symbol] = robinhood.enrich_with_vwap(watchlist_overview[symbol], historical_data_day, symbol)
-                watchlist_overview[symbol] = robinhood.enrich_with_moving_averages(watchlist_overview[symbol], historical_data_year, symbol)
+                # Get current price from Massive API
+                price = massive_client.fetch_current_price(symbol)
+                if price:
+                    watchlist_overview[symbol]['current_price'] = round(price, 2)
+                # Market data from Massive API
+                massive_client.enrich_stock_data(symbol, watchlist_overview[symbol])
+                # Account-specific data from Robinhood
+                ratings_data = robinhood.get_ratings(symbol)
                 watchlist_overview[symbol] = robinhood.enrich_with_analyst_ratings(watchlist_overview[symbol], ratings_data)
                 watchlist_overview[symbol] = robinhood.enrich_with_pdt_restrictions(watchlist_overview[symbol], symbol)
             except Exception as e:
