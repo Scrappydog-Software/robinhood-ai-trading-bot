@@ -516,21 +516,21 @@ def api_loop_stop():
 @app.route('/api/stock/<symbol>/backtest-analyze', methods=['POST'])
 @csrf.exempt
 def api_backtest_analyze(symbol):
-    """Batch-analyze historical bars using Claude Haiku.
+    """Batch-analyze ALL historical bars using Claude Haiku.
 
-    Sends unanalyzed bars in batches of 20 to Claude Haiku for
-    buy/sell/hold decisions. Stores recommendations in the
-    stock_history table. Skips previously analyzed rows.
+    Sends bars in batches of 20 to Claude Haiku for buy/sell/hold
+    decisions. Overwrites all existing recommendations so results
+    are fully from Haiku.
     """
     symbol = symbol.upper()
     BATCH_SIZE = 20
 
-    logger.info(f"WebUI: backtest analysis requested for {symbol}")
+    logger.info(f"WebUI: Haiku recompute requested for {symbol}")
 
     try:
-        unanalyzed = db.get_unanalyzed_bars(symbol)
+        unanalyzed = db.get_all_bars_for_analysis(symbol)
         if not unanalyzed:
-            return jsonify({'ok': True, 'analyzed': 0, 'message': 'All bars already analyzed'})
+            return jsonify({'ok': True, 'analyzed': 0, 'message': 'No bars to analyze'})
 
         logger.info(f"WebUI: {len(unanalyzed)} unanalyzed bars for {symbol}")
 

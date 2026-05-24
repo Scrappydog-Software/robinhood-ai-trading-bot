@@ -433,6 +433,21 @@ def get_unanalyzed_bars(symbol):
     return [dict(r) for r in rows]
 
 
+def get_all_bars_for_analysis(symbol):
+    """Return ALL bars for a symbol, oldest first (for full recompute)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, open, high, low, close, volume, vwap "
+            "FROM stock_history WHERE symbol = ? "
+            "ORDER BY bar_date ASC",
+            (symbol.upper(),)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def update_bar_recommendations(symbol, updates):
     """Batch update recommendation column for specific bar_dates.
 
