@@ -11,12 +11,18 @@ This module is the exclusive source for market data (quotes, historical OHLCV,
 indicators). Robinhood is used only for account positions and watchlists.
 """
 
+import os
 import time
 from datetime import datetime, timedelta
 
+import certifi
 import urllib3
 from urllib3.util.retry import Retry
 from massive import RESTClient
+
+# macOS Python often lacks system root certs at the default OpenSSL path.
+# Point urllib3/requests at certifi's bundle.
+os.environ.setdefault('SSL_CERT_FILE', certifi.where())
 
 from ..utils import logger
 from config import *  # noqa: F401,F403
@@ -40,7 +46,7 @@ except NameError:
 
 _RETRIES = 5
 _BACKOFF_FACTOR = 2.0
-_MIN_CALL_DELAY = 0.25  # seconds between API calls (proactive throttle)
+_MIN_CALL_DELAY = 1.0  # seconds between API calls (proactive throttle)
 _last_call_time = 0.0
 
 # ---------------------------------------------------------------------------
@@ -75,6 +81,8 @@ def get_client():
             headers=_client.client.headers,
             retries=retry_strategy,
             timeout=urllib3.Timeout(connect=10.0, read=30.0),
+            cert_reqs='CERT_REQUIRED',
+            ca_certs=certifi.where(),
         )
     return _client
 
@@ -84,7 +92,8 @@ def _throttle():
     global _last_call_time
     elapsed = time.time() - _last_call_time
     if elapsed < _MIN_CALL_DELAY:
-        time.sleep(_MIN_CALL_DELAY - elapsed)
+        wait = _MIN_CALL_DELAY - elapsed
+        time.sleep(wait)
     _last_call_time = time.time()
 
 
@@ -352,9 +361,9 @@ def enrich_stock_data(symbol, stock_data):
     """
     # Intraday data for RSI and VWAP (today's 5-minute bars)
     try:
-        logger.debug(f"MassiveClient: fetching intraday bars for {symbol}...")
+        logger.info(f"  {symbol}: fetching intraday bars...")
         intraday = fetch_intraday_bars(symbol, interval="5", span_days=1)
-        logger.debug(f"MassiveClient: got {len(intraday)} intraday bars for {symbol}")
+        logger.info(f"  {symbol}: got {len(intraday)} intraday bars")
         if intraday:
             intraday_closes = [b['close'] for b in intraday if b.get('close')]
             if len(intraday_closes) >= 15:
@@ -365,13 +374,13 @@ def enrich_stock_data(symbol, stock_data):
             if vwap is not None:
                 stock_data['vwap'] = vwap
     except Exception as e:
-        logger.error(f"MassiveClient: error computing intraday indicators for {symbol}: {e}")
+        logger.error(f"  {symbol}: error on intraday: {e}")
 
     # Daily data for moving averages (need 200+ days)
     try:
-        logger.debug(f"MassiveClient: fetching daily bars for {symbol}...")
+        logger.info(f"  {symbol}: fetching daily bars...")
         daily = fetch_daily_bars(symbol, days=365)
-        logger.debug(f"MassiveClient: got {len(daily)} daily bars for {symbol}")
+        logger.info(f"  {symbol}: got {len(daily)} daily bars")
         if daily:
             daily_closes = [b['close'] for b in daily if b.get('close')]
             ma = compute_moving_averages(daily_closes)
@@ -380,6 +389,6 @@ def enrich_stock_data(symbol, stock_data):
             if ma.get('200_day_mavg_price'):
                 stock_data['200_day_mavg_price'] = ma['200_day_mavg_price']
     except Exception as e:
-        logger.error(f"MassiveClient: error computing daily indicators for {symbol}: {e}")
+        logger.error(f"  {symbol}: error on daily bars: {e}")
 
     return stock_data

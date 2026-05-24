@@ -1,6 +1,7 @@
 robin_stocks~=3.4.0
 anthropic~=0.40.0
 massive>=1.0.0
+certifi>=2024.0.0
 pandas~=2.2.3
 pytz~=2024.2
 pyotp~=2.9.0
