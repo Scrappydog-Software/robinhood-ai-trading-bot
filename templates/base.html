@@ -108,22 +108,21 @@
             }
             html += '</div>';
 
-            // AI Analysis
-            html += '<div class="modal-section"><h3>AI Analysis</h3>';
+            // Recommendation
+            html += '<div class="modal-section"><h3>Recommendation</h3>';
             if (data.ai_decision) {
                 var dec = data.ai_decision.decision || 'unknown';
                 var cls = 'rec-' + dec.toLowerCase();
                 html += '<dl class="kv">';
-                html += '<dt>Decision</dt><dd class="rec ' + cls + '">' + esc(dec) + '</dd>';
-                html += '<dt>Quantity</dt><dd>' + esc(data.ai_decision.quantity) + '</dd>';
+                html += '<dt>Decision</dt><dd class="rec ' + cls + '" style="font-size:16px;font-weight:700;">' + esc(dec) + '</dd>';
                 html += '</dl>';
                 if (data.ai_decision.rationale) {
                     html += '<div class="modal-rationale"><strong>Rationale:</strong> ' + esc(data.ai_decision.rationale) + '</div>';
                 }
             } else {
-                html += '<p class="muted">No AI analysis available for this stock.</p>';
+                html += '<p class="muted">No recommendation available. Load history and compute signals.</p>';
             }
-            html += '<button class="btn btn-analyze" onclick="requestAnalysis(\'' + esc(data.symbol).replace(/'/g, "\\'") + '\')">Request Analysis</button>';
+            html += '<button class="btn btn-analyze" onclick="requestAnalysis(\'' + esc(data.symbol).replace(/'/g, "\\'") + '\')">Request Analysis (AI)</button>';
             html += '</div>';
 
             // Ticker Details

@@ -470,10 +470,6 @@ def api_stock_detail(symbol):
         logger.error(f"WebUI: api_stock_detail error fetching data for {symbol}: {e}")
     result['robinhood'] = rh_data
 
-    # --- AI decision + rationale ---
-    detail_map = _load_decisions_detail_map()
-    result['ai_decision'] = detail_map.get(symbol)
-
     # --- Ticker details from SQLite ---
     ticker_row = db.get_ticker_by_symbol(symbol)
     result['ticker'] = ticker_row
@@ -488,6 +484,18 @@ def api_stock_detail(symbol):
         db.compute_indicators(symbol)
         stats = db.get_stock_stats(symbol)
     result['stats'] = stats
+
+    # --- Current recommendation (from rule-based signals) ---
+    # Show the latest signal from stock_stats. Rationale is only populated
+    # when user explicitly clicks "Request Analysis" (LLM call).
+    if stats and stats.get('latest_signal'):
+        result['ai_decision'] = {
+            'decision': stats['latest_signal'],
+            'quantity': 0,
+            'rationale': None,
+        }
+    else:
+        result['ai_decision'] = None
 
     return jsonify(result)
 
