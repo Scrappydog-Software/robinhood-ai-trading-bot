@@ -757,7 +757,7 @@ def stock_history_page(symbol):
     has_signals = any(b.get('signal_synthesis') is not None for b in bars)
 
     # Backtest simulation: walk oldest→newest
-    # Prefer rule-based signal_synthesis over LLM recommendation
+    # Use signal_synthesis exclusively when signals have been computed
     INITIAL_CAPITAL = 100.0
     capital = INITIAL_CAPITAL
     shares_held = 0.0
@@ -770,7 +770,12 @@ def stock_history_page(symbol):
         bar['bt_shares_sold'] = None
         bar['bt_sale_amount'] = None
         bar['bt_running_total'] = None
-        rec = (bar.get('signal_synthesis') or bar.get('recommendation') or '').lower()
+        # Use signal_synthesis when available; only fall back to recommendation
+        # if NO signals have been computed at all for this stock
+        if has_signals:
+            rec = (bar.get('signal_synthesis') or '').lower()
+        else:
+            rec = (bar.get('recommendation') or '').lower()
 
         if state == 'waiting_to_buy' and rec in ('buy', 'strong_buy'):
             close_price = bar.get('close') or 0

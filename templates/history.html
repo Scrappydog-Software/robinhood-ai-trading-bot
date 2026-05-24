@@ -68,7 +68,7 @@
                         <td>${{ "%.2f"|format(bar.low or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.close or 0) }}</td>
                         <td style="font-size:12px; font-weight:700; color:{% if bar.signal_score is not none %}{% if bar.signal_score >= 3 %}var(--success){% elif bar.signal_score <= -3 %}var(--danger){% else %}var(--muted){% endif %}{% else %}var(--muted){% endif %}">{% if bar.signal_score is not none %}{{ bar.signal_score }}{% else %}&mdash;{% endif %}</td>
-                        <td class="rec rec-{{ (bar.signal_synthesis or bar.recommendation or 'none')|lower }}">{% if bar.signal_synthesis and bar.signal_synthesis != 'neutral' %}{{ bar.signal_synthesis }}{% elif bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        {% if has_signals %}<td class="rec rec-{{ (bar.signal_synthesis or 'none')|lower }}">{% if bar.signal_synthesis and bar.signal_synthesis != 'neutral' %}{{ bar.signal_synthesis }}{% else %}&mdash;{% endif %}</td>{% else %}<td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>{% endif %}
                         <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_sale_amount %}<span style="color:var(--danger)">${{ "%.2f"|format(bar.bt_sale_amount) }}</span>{% else %}&mdash;{% endif %}</td>
@@ -94,11 +94,13 @@
 
     var recColors = {
         'strong_buy': '#00e676', 'buy': '#87d96c',
-        'hold': 'rgba(255,255,255,0.08)',
+        'hold': 'rgba(255,255,255,0.08)', 'neutral': 'rgba(255,255,255,0.08)',
         'sell': '#e06c75', 'strong_sell': '#ff1744'
     };
+    var hasSignals = {{ 'true' if has_signals else 'false' }};
     var bgColors = bars.map(function(b) {
-        return recColors[b.recommendation] || 'rgba(255,255,255,0.08)';
+        var sig = hasSignals ? b.signal_synthesis : b.recommendation;
+        return recColors[sig] || 'rgba(255,255,255,0.08)';
     });
 
     // Buy marker dataset
