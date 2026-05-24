@@ -481,8 +481,13 @@ def api_stock_detail(symbol):
     # --- Historical data status ---
     result['history_status'] = db.get_stock_history_status(symbol)
 
-    # --- Backtest stats ---
-    result['stats'] = db.get_stock_stats(symbol)
+    # --- Backtest stats (auto-compute if history exists but stats don't) ---
+    stats = db.get_stock_stats(symbol)
+    if not stats and result['history_status'] and result['history_status']['has_data']:
+        logger.info(f"WebUI: auto-computing signals/stats for {symbol} (history exists, no stats)")
+        db.compute_indicators(symbol)
+        stats = db.get_stock_stats(symbol)
+    result['stats'] = stats
 
     return jsonify(result)
 

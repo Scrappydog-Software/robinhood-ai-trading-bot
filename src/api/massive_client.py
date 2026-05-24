@@ -223,12 +223,12 @@ def fetch_current_price(symbol):
     return None
 
 
-def fetch_daily_bars(symbol, days=365):
+def fetch_daily_bars(symbol, days=730):
     """Fetch daily OHLCV bars for a symbol.
 
     Args:
         symbol: Stock ticker symbol
-        days: Number of calendar days to look back (default 365)
+        days: Number of calendar days to look back (default 730 = ~2 years)
 
     Returns a list of dicts with: bar_date, open, high, low, close, volume, vwap
     """
@@ -376,8 +376,8 @@ def enrich_stock_data(symbol, stock_data):
     else:
         # Fetch from API and store
         try:
-            logger.info(f"  {symbol}: fetching daily bars from API...")
-            daily = fetch_daily_bars(symbol, days=365)
+            logger.info(f"  {symbol}: fetching 2-year daily bars from API...")
+            daily = fetch_daily_bars(symbol, days=730)
             logger.info(f"  {symbol}: got {len(daily)} daily bars, storing to DB...")
             if daily:
                 db.upsert_stock_history(symbol, daily)
