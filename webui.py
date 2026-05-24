@@ -342,6 +342,7 @@ def index():
     recommendations = _build_recommendations_view(portfolio_symbols=portfolio_symbols)
     decisions_map = _load_decisions_map()
     loop_status = trading_state.snapshot()
+    stock_stats = db.get_all_stock_stats()
     return render_template(
         'index.html',
         account=account,
@@ -352,6 +353,7 @@ def index():
         recommendations=recommendations,
         decisions_map=decisions_map,
         loop_status=loop_status,
+        stock_stats=stock_stats,
     )
 
 
@@ -478,6 +480,9 @@ def api_stock_detail(symbol):
 
     # --- Historical data status ---
     result['history_status'] = db.get_stock_history_status(symbol)
+
+    # --- Backtest stats ---
+    result['stats'] = db.get_stock_stats(symbol)
 
     return jsonify(result)
 

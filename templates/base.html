@@ -144,6 +144,25 @@
             }
             html += '</div>';
 
+            // Backtest Performance
+            html += '<div class="modal-section"><h3>Backtest Performance</h3>';
+            if (data.stats && data.stats.backtest_return_pct !== null) {
+                var retPct = data.stats.backtest_return_pct;
+                var retClass = retPct >= 0 ? 'rec-buy' : 'rec-sell';
+                html += '<dl class="kv">';
+                html += '<dt>2-Year Return</dt><dd class="' + retClass + '" style="font-weight:700;font-size:16px;">' + (retPct >= 0 ? '+' : '') + retPct + '%</dd>';
+                html += '<dt>$100 &rarr;</dt><dd>$' + esc(data.stats.backtest_final) + '</dd>';
+                html += '<dt>Trades</dt><dd>' + esc(data.stats.backtest_trades) + '</dd>';
+                if (data.stats.latest_signal) {
+                    var sigCls = 'rec-' + data.stats.latest_signal;
+                    html += '<dt>Latest Signal</dt><dd class="rec ' + sigCls + '">' + esc(data.stats.latest_signal) + ' (' + esc(data.stats.latest_score) + ')</dd>';
+                }
+                html += '</dl>';
+            } else {
+                html += '<p class="muted">No backtest data. Load history and compute signals first.</p>';
+            }
+            html += '</div>';
+
             // Historical Data
             html += '<div class="modal-section"><h3>Historical Data</h3>';
             if (data.history_status && data.history_status.has_data) {

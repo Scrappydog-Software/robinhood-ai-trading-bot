@@ -125,6 +125,16 @@ CREATE TABLE IF NOT EXISTS stock_history (
     PRIMARY KEY (symbol, bar_date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_history_symbol ON stock_history(symbol);
+
+CREATE TABLE IF NOT EXISTS stock_stats (
+    symbol              TEXT PRIMARY KEY,
+    backtest_return_pct REAL,
+    backtest_trades     INTEGER,
+    backtest_final      REAL,
+    latest_signal       TEXT,
+    latest_score        INTEGER,
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
 """
 
 _MIGRATION_SQL = """\
@@ -153,6 +163,7 @@ ALTER TABLE stock_history ADD COLUMN signal_bb TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_volume TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_synthesis TEXT;
 ALTER TABLE stock_history ADD COLUMN signal_score INTEGER;
+CREATE TABLE IF NOT EXISTS stock_stats (symbol TEXT PRIMARY KEY, backtest_return_pct REAL, backtest_trades INTEGER, backtest_final REAL, latest_signal TEXT, latest_score INTEGER, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')));
 """
 
 
@@ -691,7 +702,110 @@ def compute_signals(symbol):
         conn.close()
 
     logger.info(f"DB: computed signals for {symbol} ({len(bars)} bars)")
+
+    # Compute and store backtest return stats
+    compute_backtest_stats(symbol)
+
     return len(bars)
+
+
+def compute_backtest_stats(symbol):
+    """Run a backtest simulation using signal_synthesis and store results.
+
+    Simulates $100 initial investment: buy at close on buy/strong_buy,
+    sell all at open on sell/strong_sell. Stores return percentage,
+    trade count, final value, and latest signal in stock_stats.
+
+    Called automatically after compute_signals.
+    """
+    symbol = symbol.upper()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, open, close, signal_synthesis, signal_score "
+            "FROM stock_history WHERE symbol = ? ORDER BY bar_date ASC",
+            (symbol,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return
+
+    INITIAL = 100.0
+    capital = INITIAL
+    shares_held = 0.0
+    state = 'waiting'
+    trades = 0
+    latest_signal = None
+    latest_score = None
+
+    for row in rows:
+        sig = (row['signal_synthesis'] or '').lower()
+        if sig and sig != 'neutral':
+            latest_signal = sig
+            latest_score = row['signal_score']
+
+        if state == 'waiting' and sig in ('buy', 'strong_buy'):
+            close_price = row['close'] or 0
+            if close_price > 0 and capital > 0:
+                shares_held = capital / close_price
+                state = 'holding'
+        elif state == 'holding' and sig in ('sell', 'strong_sell'):
+            open_price = row['open'] or 0
+            capital = shares_held * open_price
+            shares_held = 0.0
+            state = 'waiting'
+            trades += 1
+
+    # Final value
+    if state == 'holding' and rows:
+        final = shares_held * (rows[-1]['close'] or 0)
+    else:
+        final = capital
+
+    return_pct = round((final - INITIAL) / INITIAL * 100, 1) if INITIAL > 0 else 0
+
+    # Store
+    conn = _connect()
+    try:
+        with _write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO stock_stats "
+                "(symbol, backtest_return_pct, backtest_trades, backtest_final, "
+                "latest_signal, latest_score, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                (symbol, return_pct, trades, round(final, 2), latest_signal, latest_score)
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+    logger.info(f"DB: backtest stats for {symbol}: {return_pct}% ({trades} trades)")
+    return return_pct
+
+
+def get_stock_stats(symbol):
+    """Return stock_stats row for a symbol, or None."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM stock_stats WHERE symbol = ?",
+            (symbol.upper(),)
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def get_all_stock_stats():
+    """Return all stock_stats rows as a dict keyed by symbol."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM stock_stats").fetchall()
+    finally:
+        conn.close()
+    return {row['symbol']: dict(row) for row in rows}
 
 
 def get_distinct_values(column):

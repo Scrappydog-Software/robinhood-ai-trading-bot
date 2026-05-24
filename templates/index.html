@@ -107,10 +107,12 @@
                     <th>Avg Buy Price</th>
                     <th>Position Value</th>
                     <th>Recommendation</th>
+                    <th>Backtest</th>
                 </tr>
             </thead>
             <tbody>
                 {% for row in portfolio_rows %}
+                    {% set stats = stock_stats.get(row.symbol) %}
                     <tr data-symbol="{{ row.symbol }}">
                         <td><strong>{{ row.symbol }}</strong></td>
                         <td>{{ row.quantity }}</td>
@@ -118,6 +120,7 @@
                         <td>${{ row.avg_buy_price }}</td>
                         <td>${{ row.position_value }}</td>
                         <td class="rec rec-{{ (row.recommendation or 'none')|lower }}">{% if row.recommendation %}{{ row.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        <td class="{% if stats and stats.backtest_return_pct is not none %}{% if stats.backtest_return_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if stats and stats.backtest_return_pct is not none %}{{ "+" if stats.backtest_return_pct >= 0 }}{{ stats.backtest_return_pct }}%{% else %}&mdash;{% endif %}</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -145,15 +148,18 @@
                         <tr>
                             <th>Symbol</th>
                             <th>Recommendation</th>
+                            <th>Backtest</th>
                             <th class="actions-col">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for symbol in wl.symbols %}
                             {% set rec = decisions_map.get(symbol) %}
+                            {% set stats = stock_stats.get(symbol) %}
                             <tr data-symbol="{{ symbol }}">
                                 <td><strong>{{ symbol }}</strong></td>
                                 <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
+                                <td class="{% if stats and stats.backtest_return_pct is not none %}{% if stats.backtest_return_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if stats and stats.backtest_return_pct is not none %}{{ "+" if stats.backtest_return_pct >= 0 }}{{ stats.backtest_return_pct }}%{% else %}&mdash;{% endif %}</td>
                                 <td class="actions-col">
                                     <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
