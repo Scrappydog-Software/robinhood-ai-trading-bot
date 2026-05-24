@@ -38,9 +38,6 @@ try:
 except NameError:
     AFTER_HOURS_INTERVAL_SECONDS = 3600
 
-# Path to the JSON file written by main.py each cycle. Resolved relative to
-# webui's CWD (same convention main.py uses when writing).
-LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
 from src.api import claude
@@ -51,84 +48,16 @@ from src.trading import loop as trading_loop
 from src.utils import logger
 
 
-def _load_decisions_map():
-    """Return a dict mapping symbol -> decision from the most recent cycle.
+def _build_decisions_map_from_stats(all_stats):
+    """Build a symbol -> decision mapping from stock_stats.
 
-    Reads from in-process shared state first (populated by the unified app's
-    trading loop). Falls back to data/last-decisions.json if shared state is
-    empty (backward compatibility when running webui.py standalone alongside
-    a separate main.py process).
-
-    Returns an empty dict if no data is available so callers can safely do
-    ``decisions_map.get(symbol)`` without error handling.
+    Single source of truth for recommendations across the entire UI.
     """
-    # Try in-process shared state first
-    state_decisions = trading_state.decisions
-    if state_decisions:
-        mapping = {}
-        for d in state_decisions:
-            if not isinstance(d, dict):
-                continue
-            symbol = d.get('symbol')
-            decision = d.get('decision')
-            if symbol and decision:
-                mapping[symbol] = decision
-        return mapping
-
-    # Fall back to JSON file
-    if not os.path.exists(LAST_DECISIONS_PATH):
-        return {}
-    try:
-        with open(LAST_DECISIONS_PATH, 'r') as f:
-            payload = json.load(f)
-    except Exception as e:
-        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions map: {e}")
-        return {}
-
-    decisions = payload.get('decisions') or []
-    mapping = {}
-    for d in decisions:
-        if not isinstance(d, dict):
-            continue
-        symbol = d.get('symbol')
-        decision = d.get('decision')
-        if symbol and decision:
-            mapping[symbol] = decision
-    return mapping
-
-
-def _load_decisions_detail_map():
-    """Return a dict mapping symbol -> {decision, rationale, quantity}.
-
-    Like _load_decisions_map but includes all decision fields for the
-    stock detail popup.
-    """
-    state_decisions = trading_state.decisions
-    source = state_decisions if state_decisions else None
-
-    if not source:
-        if not os.path.exists(LAST_DECISIONS_PATH):
-            return {}
-        try:
-            with open(LAST_DECISIONS_PATH, 'r') as f:
-                payload = json.load(f)
-            source = payload.get('decisions') or []
-        except Exception as e:
-            logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions detail map: {e}")
-            return {}
-
-    mapping = {}
-    for d in source:
-        if not isinstance(d, dict):
-            continue
-        symbol = d.get('symbol')
-        if symbol:
-            mapping[symbol] = {
-                'decision': d.get('decision'),
-                'quantity': d.get('quantity', 0),
-                'rationale': d.get('rationale', ''),
-            }
-    return mapping
+    return {
+        symbol: stats.get('latest_signal')
+        for symbol, stats in all_stats.items()
+        if stats.get('latest_signal')
+    }
 
 
 app = Flask(__name__)
@@ -176,7 +105,6 @@ def _build_portfolio_view():
         logger.error(f"Error loading portfolio stocks: {e}")
         return [], str(e), 0.0
 
-    decisions_map = _load_decisions_map()
     all_stats = db.get_all_stock_stats()
     rows = []
     total_value = 0.0
@@ -187,16 +115,14 @@ def _build_portfolio_view():
             avg = float(data.get('average_buy_price', 0) or 0)
             position_value = price * qty
             total_value += position_value
-            # Prefer rule-based signal from stock_stats; fall back to LLM decision
             stats = all_stats.get(symbol)
-            rec = (stats.get('latest_signal') if stats else None) or decisions_map.get(symbol)
             rows.append({
                 'symbol': symbol,
                 'quantity': round(qty, 6),
                 'current_price': round(price, 2),
                 'avg_buy_price': round(avg, 2),
                 'position_value': round(position_value, 2),
-                'recommendation': rec,
+                'recommendation': stats.get('latest_signal') if stats else None,
             })
         except Exception as e:
             logger.error(f"Error parsing holding {symbol}: {e}")
@@ -215,126 +141,36 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
-def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle, portfolio_symbols=None):
-    """Common logic to shape a decisions list into the template view dict.
+def _build_recommendations_view(all_stats, portfolio_symbols=None):
+    """Build actionable recommendations from stock_stats.
 
-    Used by both the in-process state path and the JSON file fallback.
+    Shows buy/strong_buy recommendations and sell/strong_sell for stocks
+    currently in the portfolio. Holds are excluded.
     """
-    empty = {
-        'available': False,
-        'timestamp': None,
-        'age_seconds': None,
-        'stale': False,
-        'market_open_at_cycle': None,
-        'rows': [],
-        'hold_count': 0,
-        'error': None,
-    }
-
-    if decisions is None:
-        return empty
-
-    # Compute age from timestamp
-    age_seconds = None
-    if isinstance(timestamp, str):
-        try:
-            ts_norm = timestamp.replace('Z', '+00:00')
-            file_dt = datetime.fromisoformat(ts_norm)
-            age_seconds = int((datetime.now(timezone.utc) - file_dt).total_seconds())
-        except Exception as e:
-            logger.error(f"WebUI: error parsing timestamp '{timestamp}': {e}")
-
-    # Stale if older than the cadence the bot would have used.
-    stale = False
-    if age_seconds is not None:
-        threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
-        stale = age_seconds > threshold
-
     held = set(portfolio_symbols or [])
     rows = []
-    for d in decisions:
-        if not isinstance(d, dict):
-            continue
-        decision = d.get('decision')
-        symbol = d.get('symbol')
-        if decision == 'hold':
+    for symbol, stats in all_stats.items():
+        decision = stats.get('latest_signal')
+        if not decision or decision == 'hold':
             continue
         if decision in ('sell', 'strong_sell') and symbol not in held:
             continue
         if decision not in ('strong_buy', 'buy', 'sell', 'strong_sell'):
             continue
-        try:
-            quantity = float(d.get('quantity', 0) or 0)
-        except (TypeError, ValueError):
-            quantity = 0.0
         rows.append({
             'symbol': symbol,
             'decision': decision,
-            'quantity': quantity,
+            'quantity': 0,
         })
 
     order = {'strong_buy': 0, 'buy': 1, 'sell': 2, 'strong_sell': 3}
     rows.sort(key=lambda r: (order.get(r['decision'], 4), r['symbol'] or ''))
 
     return {
-        'available': True,
-        'timestamp': timestamp,
-        'age_seconds': age_seconds,
-        'stale': stale,
-        'market_open_at_cycle': bool(market_open_at_cycle) if market_open_at_cycle is not None else None,
+        'available': len(all_stats) > 0,
         'rows': rows,
-        'hold_count': 0,
         'error': None,
     }
-
-
-def _build_recommendations_view(portfolio_symbols=None):
-    """Load the most recent cycle's AI decisions, filtered for actionable items.
-
-    Shows only buy recommendations and sell recommendations for stocks
-    currently in the portfolio. Holds are excluded — they remain visible
-    in the Recommendation column of the Portfolio and Watchlist tables.
-    """
-    empty = {
-        'available': False,
-        'timestamp': None,
-        'age_seconds': None,
-        'stale': False,
-        'market_open_at_cycle': None,
-        'rows': [],
-        'hold_count': 0,
-        'error': None,
-    }
-
-    # Try in-process shared state first
-    state = trading_state.snapshot()
-    if state['decisions']:
-        return _build_recommendations_from_decisions(
-            state['decisions'],
-            state['last_cycle_time'],
-            state['market_open'],
-            portfolio_symbols=portfolio_symbols,
-        )
-
-    # Fall back to JSON file
-    if not os.path.exists(LAST_DECISIONS_PATH):
-        return empty
-
-    try:
-        with open(LAST_DECISIONS_PATH, 'r') as f:
-            payload = json.load(f)
-    except Exception as e:
-        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH}: {e}")
-        result = dict(empty)
-        result['error'] = str(e)
-        return result
-
-    return _build_recommendations_from_decisions(
-        payload.get('decisions') or [],
-        payload.get('timestamp'),
-        payload.get('market_open'),
-        portfolio_symbols=portfolio_symbols,
-    )
 
 
 @app.route('/')
@@ -343,10 +179,10 @@ def index():
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
     portfolio_symbols = [r['symbol'] for r in portfolio_rows]
     watchlists = _build_watchlists_view()
-    recommendations = _build_recommendations_view(portfolio_symbols=portfolio_symbols)
-    decisions_map = _load_decisions_map()
-    loop_status = trading_state.snapshot()
     stock_stats = db.get_all_stock_stats()
+    recommendations = _build_recommendations_view(stock_stats, portfolio_symbols=portfolio_symbols)
+    decisions_map = _build_decisions_map_from_stats(stock_stats)
+    loop_status = trading_state.snapshot()
     return render_template(
         'index.html',
         account=account,

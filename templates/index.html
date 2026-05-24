@@ -55,34 +55,23 @@
     {% if recommendations.error %}
         <p class="error">Error loading recommendations: {{ recommendations.error }}</p>
     {% elif not recommendations.available %}
-        <p class="muted">No recent recommendations. Start the trading loop above or run <code>python app.py</code> to populate this section.</p>
+        <p class="muted">No recommendations available. Load history and compute signals for your stocks.</p>
     {% else %}
-        <p class="muted small">
-            Last cycle: {{ recommendations.timestamp }}
-            ({% if recommendations.market_open_at_cycle %}market open{% else %}after hours{% endif %})
-            {% if recommendations.stale %}
-                <span class="stale-badge">stale</span>
-            {% else %}
-                <span class="fresh-badge">fresh</span>
-            {% endif %}
-        </p>
         {% if recommendations.rows|length == 0 %}
-            <p class="muted">No recommendations this cycle.</p>
+            <p class="muted">All stocks are hold — no actionable recommendations.</p>
         {% else %}
             <table>
                 <thead>
                     <tr>
                         <th>Symbol</th>
-                        <th>Decision</th>
-                        <th>Quantity</th>
+                        <th>Recommendation</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for row in recommendations.rows %}
                         <tr class="{{ row.decision }}" data-symbol="{{ row.symbol }}">
                             <td><strong>{{ row.symbol }}</strong></td>
-                            <td>{{ row.decision }}</td>
-                            <td>{{ "%.6f"|format(row.quantity) }}</td>
+                            <td class="rec rec-{{ row.decision }}">{{ row.decision }}</td>
                         </tr>
                     {% endfor %}
                 </tbody>
