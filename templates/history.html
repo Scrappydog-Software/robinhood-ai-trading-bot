@@ -52,7 +52,7 @@
                     <th>Low</th>
                     <th>Close</th>
                     <th>Score</th>
-                    <th>Rec</th>
+                    <th>Recommendation</th>
                     <th>Shares Bought</th>
                     <th>Shares Sold</th>
                     <th>Sale $</th>
@@ -68,7 +68,7 @@
                         <td>${{ "%.2f"|format(bar.low or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.close or 0) }}</td>
                         <td style="font-size:12px; font-weight:700; color:{% if bar.signal_score is not none %}{% if bar.signal_score >= 3 %}var(--success){% elif bar.signal_score <= -3 %}var(--danger){% else %}var(--muted){% endif %}{% else %}var(--muted){% endif %}">{% if bar.signal_score is not none %}{{ bar.signal_score }}{% else %}&mdash;{% endif %}</td>
-                        <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation and bar.recommendation != 'neutral' %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_sale_amount %}<span style="color:var(--danger)">${{ "%.2f"|format(bar.bt_sale_amount) }}</span>{% else %}&mdash;{% endif %}</td>
