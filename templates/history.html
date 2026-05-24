@@ -29,9 +29,12 @@
             <canvas id="volumeChart"></canvas>
         </div>
 
-        <div style="margin-bottom:16px; display:flex; gap:8px; align-items:center;">
+        <div style="margin-bottom:16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             <button class="btn" id="btn-analyze-history">
                 {% if unanalyzed_count == 0 %}All Analyzed{% else %}Analyze {{ unanalyzed_count }} Bars (Haiku){% endif %}
+            </button>
+            <button class="btn btn-sm" id="btn-compute-indicators" style="background:var(--bg-elev);border:1px solid var(--accent);color:var(--accent);">
+                {% if has_indicators %}Recompute Indicators{% else %}Compute Indicators{% endif %}
             </button>
             <span id="analyze-status" class="muted small"></span>
         </div>
@@ -45,6 +48,8 @@
                     <th>High</th>
                     <th>Low</th>
                     <th>Close</th>
+                    <th>RSI</th>
+                    <th>MACD</th>
                     <th>Rec</th>
                     <th>Shares Bought</th>
                     <th>Shares Sold</th>
@@ -60,6 +65,8 @@
                         <td>${{ "%.2f"|format(bar.high or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.low or 0) }}</td>
                         <td>${{ "%.2f"|format(bar.close or 0) }}</td>
+                        <td class="{% if bar.rsi_14 is not none %}{% if bar.rsi_14 < 30 %}rec-buy{% elif bar.rsi_14 > 70 %}rec-sell{% endif %}{% endif %}" style="font-size:12px;">{% if bar.rsi_14 is not none %}{{ "%.1f"|format(bar.rsi_14) }}{% else %}&mdash;{% endif %}</td>
+                        <td style="font-size:12px;">{% if bar.macd_histogram is not none %}<span style="color:{% if bar.macd_histogram > 0 %}var(--success){% else %}var(--danger){% endif %}">{{ "%.2f"|format(bar.macd_histogram) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td class="rec rec-{{ (bar.recommendation or 'none')|lower }}">{% if bar.recommendation %}{{ bar.recommendation }}{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_bought %}<span style="color:var(--success)">{{ "%.4f"|format(bar.bt_shares_bought) }}</span>{% else %}&mdash;{% endif %}</td>
                         <td>{% if bar.bt_shares_sold %}<span style="color:var(--danger)">{{ "%.4f"|format(bar.bt_shares_sold) }}</span>{% else %}&mdash;{% endif %}</td>
@@ -229,6 +236,32 @@
                 .catch(function(err) {
                     btn.disabled = false;
                     btn.textContent = 'Retry Analysis';
+                    status.textContent = 'Error: ' + err;
+                });
+        });
+    }
+
+    // Compute Indicators button
+    var btnInd = document.getElementById('btn-compute-indicators');
+    if (btnInd) {
+        btnInd.addEventListener('click', function() {
+            btnInd.disabled = true;
+            btnInd.innerHTML = '<span class="spinner"></span> Computing...';
+            fetch('/api/stock/{{ symbol }}/compute-indicators', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.ok) {
+                        status.textContent = data.bars_computed + ' bars computed';
+                        setTimeout(function() { window.location.reload(); }, 1000);
+                    } else {
+                        btnInd.disabled = false;
+                        btnInd.textContent = 'Retry';
+                        status.textContent = 'Error: ' + (data.error || 'Unknown');
+                    }
+                })
+                .catch(function(err) {
+                    btnInd.disabled = false;
+                    btnInd.textContent = 'Retry';
                     status.textContent = 'Error: ' + err;
                 });
         });

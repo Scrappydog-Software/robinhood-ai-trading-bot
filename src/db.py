@@ -97,6 +97,22 @@ CREATE TABLE IF NOT EXISTS stock_history (
     vwap      REAL,
     transactions INTEGER,
     recommendation TEXT,
+    sma_10    REAL,
+    sma_20    REAL,
+    sma_50    REAL,
+    sma_200   REAL,
+    ema_12    REAL,
+    ema_26    REAL,
+    rsi_14    REAL,
+    macd_line REAL,
+    macd_signal REAL,
+    macd_histogram REAL,
+    bb_upper  REAL,
+    bb_lower  REAL,
+    bb_width  REAL,
+    vol_sma_20 REAL,
+    vol_ratio REAL,
+    obv       REAL,
     loaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     PRIMARY KEY (symbol, bar_date)
 );
@@ -105,6 +121,22 @@ CREATE INDEX IF NOT EXISTS idx_stock_history_symbol ON stock_history(symbol);
 
 _MIGRATION_SQL = """\
 ALTER TABLE stock_history ADD COLUMN recommendation TEXT;
+ALTER TABLE stock_history ADD COLUMN sma_10 REAL;
+ALTER TABLE stock_history ADD COLUMN sma_20 REAL;
+ALTER TABLE stock_history ADD COLUMN sma_50 REAL;
+ALTER TABLE stock_history ADD COLUMN sma_200 REAL;
+ALTER TABLE stock_history ADD COLUMN ema_12 REAL;
+ALTER TABLE stock_history ADD COLUMN ema_26 REAL;
+ALTER TABLE stock_history ADD COLUMN rsi_14 REAL;
+ALTER TABLE stock_history ADD COLUMN macd_line REAL;
+ALTER TABLE stock_history ADD COLUMN macd_signal REAL;
+ALTER TABLE stock_history ADD COLUMN macd_histogram REAL;
+ALTER TABLE stock_history ADD COLUMN bb_upper REAL;
+ALTER TABLE stock_history ADD COLUMN bb_lower REAL;
+ALTER TABLE stock_history ADD COLUMN bb_width REAL;
+ALTER TABLE stock_history ADD COLUMN vol_sma_20 REAL;
+ALTER TABLE stock_history ADD COLUMN vol_ratio REAL;
+ALTER TABLE stock_history ADD COLUMN obv REAL;
 """
 
 
@@ -333,11 +365,14 @@ def get_stock_history_status(symbol):
 
 
 def get_stock_history_bars(symbol):
-    """Return all daily OHLCV bars for a symbol, oldest first."""
+    """Return all daily OHLCV bars + indicators for a symbol, oldest first."""
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT bar_date, open, high, low, close, volume, vwap, transactions, recommendation "
+            "SELECT bar_date, open, high, low, close, volume, vwap, transactions, "
+            "recommendation, sma_10, sma_20, sma_50, sma_200, ema_12, ema_26, "
+            "rsi_14, macd_line, macd_signal, macd_histogram, "
+            "bb_upper, bb_lower, bb_width, vol_sma_20, vol_ratio, obv "
             "FROM stock_history WHERE symbol = ? ORDER BY bar_date ASC",
             (symbol.upper(),)
         ).fetchall()
@@ -381,10 +416,7 @@ def update_bar_recommendations(symbol, updates):
 
 
 def get_stock_analysis_history(symbol, limit=50):
-    """Return recent analysis rows for a symbol, newest first.
-
-    Returns a list of dicts.
-    """
+    """Return recent analysis rows for a symbol, newest first."""
     conn = _connect()
     try:
         rows = conn.execute(
@@ -395,6 +427,163 @@ def get_stock_analysis_history(symbol, limit=50):
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+def compute_indicators(symbol):
+    """Compute all technical indicators for a symbol's history bars.
+
+    Reads OHLCV data, computes SMA/EMA/RSI/MACD/Bollinger/Volume
+    indicators, and writes them back to the database. Pure math —
+    no API calls.
+
+    Returns the number of bars updated.
+    """
+    symbol = symbol.upper()
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT bar_date, close, high, low, volume FROM stock_history "
+            "WHERE symbol = ? ORDER BY bar_date ASC",
+            (symbol,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return 0
+
+    dates = [r['bar_date'] for r in rows]
+    closes = [r['close'] or 0 for r in rows]
+    highs = [r['high'] or 0 for r in rows]
+    lows = [r['low'] or 0 for r in rows]
+    volumes = [r['volume'] or 0 for r in rows]
+    n = len(closes)
+
+    def _sma(data, period):
+        out = [None] * n
+        for i in range(period - 1, n):
+            out[i] = sum(data[i - period + 1:i + 1]) / period
+        return out
+
+    def _ema(data, period):
+        out = [None] * n
+        if n < period:
+            return out
+        k = 2 / (period + 1)
+        avg = sum(data[:period]) / period
+        out[period - 1] = avg
+        for i in range(period, n):
+            avg = data[i] * k + avg * (1 - k)
+            out[i] = avg
+        return out
+
+    sma10 = _sma(closes, 10)
+    sma20 = _sma(closes, 20)
+    sma50 = _sma(closes, 50)
+    sma200 = _sma(closes, 200)
+    ema12 = _ema(closes, 12)
+    ema26 = _ema(closes, 26)
+
+    # RSI(14)
+    rsi = [None] * n
+    if n > 14:
+        gains = []
+        losses = []
+        for i in range(1, n):
+            diff = closes[i] - closes[i - 1]
+            gains.append(max(diff, 0))
+            losses.append(max(-diff, 0))
+        avg_g = sum(gains[:14]) / 14
+        avg_l = sum(losses[:14]) / 14
+        rsi[14] = 100 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l)
+        for i in range(14, len(gains)):
+            avg_g = (avg_g * 13 + gains[i]) / 14
+            avg_l = (avg_l * 13 + losses[i]) / 14
+            rsi[i + 1] = 100 if avg_l == 0 else 100 - 100 / (1 + avg_g / avg_l)
+
+    # MACD
+    macd_l = [None] * n
+    for i in range(n):
+        if ema12[i] is not None and ema26[i] is not None:
+            macd_l[i] = ema12[i] - ema26[i]
+    macd_valid = [x for x in macd_l if x is not None]
+    macd_sig = [None] * n
+    macd_hist = [None] * n
+    if len(macd_valid) >= 9:
+        k = 2 / 10
+        offset = n - len(macd_valid)
+        avg = sum(macd_valid[:9]) / 9
+        macd_sig[offset + 8] = avg
+        for j in range(9, len(macd_valid)):
+            avg = macd_valid[j] * k + avg * (1 - k)
+            macd_sig[offset + j] = avg
+    for i in range(n):
+        if macd_l[i] is not None and macd_sig[i] is not None:
+            macd_hist[i] = macd_l[i] - macd_sig[i]
+
+    # Bollinger Bands
+    bb_upper = [None] * n
+    bb_lower = [None] * n
+    bb_width = [None] * n
+    for i in range(n):
+        if sma20[i] is not None:
+            window = closes[max(0, i - 19):i + 1]
+            std = (sum((x - sma20[i]) ** 2 for x in window) / len(window)) ** 0.5
+            bb_upper[i] = sma20[i] + 2 * std
+            bb_lower[i] = sma20[i] - 2 * std
+            bb_width[i] = (bb_upper[i] - bb_lower[i]) / sma20[i] * 100 if sma20[i] else None
+
+    # Volume indicators
+    vol_sma = _sma(volumes, 20)
+    vol_ratio = [None] * n
+    for i in range(n):
+        if vol_sma[i] and vol_sma[i] > 0:
+            vol_ratio[i] = volumes[i] / vol_sma[i]
+
+    # OBV
+    obv = [0.0] * n
+    for i in range(1, n):
+        if closes[i] > closes[i - 1]:
+            obv[i] = obv[i - 1] + volumes[i]
+        elif closes[i] < closes[i - 1]:
+            obv[i] = obv[i - 1] - volumes[i]
+        else:
+            obv[i] = obv[i - 1]
+
+    # Write back
+    conn = _connect()
+    try:
+        with _write_lock:
+            for i in range(n):
+                conn.execute(
+                    "UPDATE stock_history SET "
+                    "sma_10=?, sma_20=?, sma_50=?, sma_200=?, "
+                    "ema_12=?, ema_26=?, rsi_14=?, "
+                    "macd_line=?, macd_signal=?, macd_histogram=?, "
+                    "bb_upper=?, bb_lower=?, bb_width=?, "
+                    "vol_sma_20=?, vol_ratio=?, obv=? "
+                    "WHERE symbol=? AND bar_date=?",
+                    (
+                        _r(sma10[i]), _r(sma20[i]), _r(sma50[i]), _r(sma200[i]),
+                        _r(ema12[i]), _r(ema26[i]), _r(rsi[i]),
+                        _r(macd_l[i]), _r(macd_sig[i]), _r(macd_hist[i]),
+                        _r(bb_upper[i]), _r(bb_lower[i]), _r(bb_width[i]),
+                        _r(vol_sma[i]), _r(vol_ratio[i]), round(obv[i], 2),
+                        symbol, dates[i],
+                    )
+                )
+            conn.commit()
+    finally:
+        conn.close()
+
+    from src.utils import logger
+    logger.info(f"DB: computed indicators for {symbol} ({n} bars)")
+    return n
+
+
+def _r(val, decimals=4):
+    """Round a value if not None."""
+    return round(val, decimals) if val is not None else None
 
 
 def get_loaded_at():

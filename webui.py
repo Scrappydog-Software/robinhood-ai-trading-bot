@@ -608,14 +608,32 @@ def api_stock_load_history(symbol):
         bars_loaded = db.upsert_stock_history(symbol, bars)
         logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol} ({from_date} to {to_date})")
 
+        indicators_computed = db.compute_indicators(symbol)
+        logger.info(f"WebUI: computed indicators for {symbol} ({indicators_computed} bars)")
+
         return jsonify({
             'ok': True,
             'bars_loaded': bars_loaded,
+            'indicators_computed': indicators_computed,
             'from_date': from_date,
             'to_date': to_date,
         })
     except Exception as e:
         logger.error(f"WebUI: error loading history for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/compute-indicators', methods=['POST'])
+@csrf.exempt
+def api_compute_indicators(symbol):
+    """Compute technical indicators for a stock's existing history."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: computing indicators for {symbol}")
+    try:
+        count = db.compute_indicators(symbol)
+        return jsonify({'ok': True, 'bars_computed': count})
+    except Exception as e:
+        logger.error(f"WebUI: error computing indicators for {symbol}: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
@@ -733,6 +751,7 @@ def stock_history_page(symbol):
     ticker = db.get_ticker_by_symbol(symbol)
     analyzed_count = sum(1 for b in bars if b.get('recommendation'))
     unanalyzed_count = len(bars) - analyzed_count
+    has_indicators = any(b.get('sma_10') is not None for b in bars)
 
     # Backtest simulation: walk oldest→newest
     INITIAL_CAPITAL = 100.0
@@ -793,6 +812,7 @@ def stock_history_page(symbol):
         bt_final=bt_final,
         bt_return_pct=bt_return_pct,
         bt_trades=bt_trades,
+        has_indicators=has_indicators,
         initial_capital=INITIAL_CAPITAL,
     )
 
