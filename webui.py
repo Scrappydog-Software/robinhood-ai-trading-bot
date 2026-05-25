@@ -570,17 +570,18 @@ def api_backtest_analyze(symbol):
             prompt = (
                 f"You are a systematic technical analyst evaluating {symbol}.\n\n"
                 f"**Analysis Framework (apply these rules):**\n"
-                f"1. MA Crossover: SMA(50) vs SMA(200) alignment. Triple alignment (price>50>200) = strong buy. Price below SMA(200) = no longs.\n"
-                f"2. RSI: Below 30 crossing up = buy. Above 70 crossing down = sell. IMPORTANT: If price is >25% above SMA(200), the stock is overextended — downgrade buy signals.\n"
-                f"3. MACD: Histogram positive and growing = bullish momentum. Negative and falling = bearish.\n"
+                f"1. MA Crossover: SMA(50) vs SMA(200) alignment. Triple alignment (price>50>200) = bullish trend. Price below SMA(200) = no longs.\n"
+                f"2. RSI: Below 30 crossing up = buy. Above 70 crossing down = sell.\n"
+                f"3. MACD: Histogram positive and growing = bullish momentum. Negative and falling = bearish. Crossovers confirm direction.\n"
                 f"4. RSI+MACD Combined: Both must agree for strong signals. Conflicting = hold.\n"
-                f"5. Bollinger Bands: Close above upper band with low volume = overextended. Close below lower band = oversold.\n"
+                f"5. Bollinger Bands: Close above upper band with low volume = caution. Close below lower band = potential bounce.\n"
                 f"6. Volume: Vol_ratio > 1.5 confirms breakouts. Below 0.8 = suspect move.\n"
-                f"7. Overextension Rule: If close is >30% above SMA(200), classify as hold regardless of other signals — the mean reversion risk is too high.\n\n"
+                f"7. Overextension: If close is >30% above SMA(200), do NOT issue strong_buy — cap at buy. Sell signals still apply normally.\n"
+                f"8. Conviction: strong_buy requires 5+ bullish signals aligned. buy requires 3-4. hold = mixed. sell requires 3-4 bearish. strong_sell requires 5+ bearish.\n\n"
                 f"**Data (with pre-computed indicators):**\n```json\n{json.dumps(bars_data, indent=1)}\n```\n\n"
                 f"**Response Format:**\nReturn a JSON array with one entry per day:\n"
                 f'[{{"date": "YYYY-MM-DD", "recommendation": "strong_buy|buy|hold|sell|strong_sell"}}]\n\n'
-                f"Apply the framework rules strictly. Provide only the JSON output with no additional text."
+                f"Provide only the JSON output with no additional text."
             )
 
             resp = haiku_client.messages.create(
