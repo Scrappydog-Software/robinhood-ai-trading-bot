@@ -332,3 +332,23 @@ tr[data-symbol]:hover { background: rgba(74, 158, 255, 0.08); }
     height: 175px;
     margin-bottom: 24px;
 }
+
+/* Screener page */
+.screener-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+.screener-controls input[type="text"] {
+    flex: 1;
+    max-width: 360px;
+}
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+th.sortable:hover { color: var(--accent); }
+th.sort-active { color: var(--accent); }
+.sort-arrow { font-size: 10px; }

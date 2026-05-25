@@ -881,6 +881,29 @@ def get_distinct_values(column):
     return [r[0] for r in rows]
 
 
+def get_screener_stocks():
+    """Return all stocks from stock_stats joined with tickers for the screener.
+
+    Returns a list of dicts with keys: symbol, name, latest_signal,
+    latest_score, bt_1yr_return_pct, backtest_return_pct, bt_1yr_trades.
+    Stocks in stock_stats without a matching ticker row will still appear
+    (name will be None).
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT s.symbol, t.name, s.latest_signal, s.latest_score, "
+            "s.bt_1yr_return_pct, s.backtest_return_pct, s.bt_1yr_trades, "
+            "s.backtest_trades, s.history_bars "
+            "FROM stock_stats s "
+            "LEFT JOIN tickers t ON s.symbol = t.ticker "
+            "ORDER BY s.symbol"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_latest_bar_date(symbol):
     """Return the most recent bar_date for a symbol, or None if no history."""
     conn = _connect()

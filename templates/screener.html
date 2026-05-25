@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+    <h2>Stock Screener</h2>
+    <p class="muted small">
+        All stocks with computed signals. Click any row for details.
+        {{ stocks|length }} stock{{ '' if stocks|length == 1 else 's' }} analyzed.
+    </p>
+
+    <div class="screener-controls">
+        <input type="text" id="screener-search" placeholder="Search by symbol or name..." autocomplete="off">
+        <span class="muted small" id="screener-count"></span>
+    </div>
+</section>
+
+<section class="card">
+    <div class="table-scroll">
+        <table id="screener-table">
+            <thead>
+                <tr>
+                    <th class="sortable" data-col="0" data-type="string">Symbol <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="1" data-type="string">Name <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="2" data-type="string">Recommendation <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="3" data-type="number">Score <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="4" data-type="number">1yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="5" data-type="number">2yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="6" data-type="number">Trades <span class="sort-arrow"></span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in stocks %}
+                <tr data-symbol="{{ stock.symbol }}"
+                    data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}">
+                    <td><strong>{{ stock.symbol }}</strong></td>
+                    <td>{{ stock.name or '—' }}</td>
+                    <td>
+                        {% if stock.latest_signal %}
+                            <span class="rec rec-{{ stock.latest_signal }}">{{ stock.latest_signal }}</span>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ stock.latest_score if stock.latest_score is not none else '—' }}</td>
+                    <td>
+                        {% if stock.bt_1yr_return_pct is not none %}
+                            <span class="{{ 'rec-buy' if stock.bt_1yr_return_pct >= 0 else 'rec-sell' }}" style="font-weight:600;">
+                                {{ '+' if stock.bt_1yr_return_pct >= 0 else '' }}{{ stock.bt_1yr_return_pct }}%
+                            </span>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if stock.backtest_return_pct is not none %}
+                            <span class="{{ 'rec-buy' if stock.backtest_return_pct >= 0 else 'rec-sell' }}" style="font-weight:600;">
+                                {{ '+' if stock.backtest_return_pct >= 0 else '' }}{{ stock.backtest_return_pct }}%
+                            </span>
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ stock.bt_1yr_trades if stock.bt_1yr_trades is not none else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if stocks|length == 0 %}
+        <p class="muted" style="margin-top:12px;">
+            No stocks analyzed yet. Load history and compute signals from the Dashboard or stock detail modal.
+        </p>
+    {% endif %}
+</section>
+
+<script>
+(function() {
+    var searchInput = document.getElementById('screener-search');
+    var countEl = document.getElementById('screener-count');
+    var table = document.getElementById('screener-table');
+    var tbody = table.querySelector('tbody');
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    var headers = table.querySelectorAll('th.sortable');
+    var currentSort = { col: -1, asc: true };
+
+    function updateCount() {
+        var visible = rows.filter(function(r) { return r.style.display !== 'none'; }).length;
+        countEl.textContent = visible + ' of ' + rows.length + ' shown';
+    }
+
+    // --- Search/filter ---
+    searchInput.addEventListener('input', function() {
+        var q = this.value.toLowerCase().trim();
+        rows.forEach(function(row) {
+            var text = row.getAttribute('data-search') || '';
+            row.style.display = (q === '' || text.indexOf(q) !== -1) ? '' : 'none';
+        });
+        updateCount();
+    });
+
+    // --- Sortable columns ---
+    function getSortValue(row, col, type) {
+        var cell = row.children[col];
+        if (!cell) return '';
+        var text = cell.textContent.trim().replace(/[+%]/g, '');
+        if (text === '—' || text === '') return type === 'number' ? -Infinity : '';
+        if (type === 'number') {
+            var n = parseFloat(text);
+            return isNaN(n) ? -Infinity : n;
+        }
+        return text.toLowerCase();
+    }
+
+    headers.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = parseInt(this.getAttribute('data-col'), 10);
+            var type = this.getAttribute('data-type');
+            var asc;
+
+            if (currentSort.col === col) {
+                asc = !currentSort.asc;
+            } else {
+                asc = true;
+            }
+            currentSort = { col: col, asc: asc };
+
+            // Update arrow indicators
+            headers.forEach(function(h) {
+                h.querySelector('.sort-arrow').textContent = '';
+                h.classList.remove('sort-active');
+            });
+            this.querySelector('.sort-arrow').textContent = asc ? ' ▲' : ' ▼';
+            this.classList.add('sort-active');
+
+            // Sort rows
+            rows.sort(function(a, b) {
+                var va = getSortValue(a, col, type);
+                var vb = getSortValue(b, col, type);
+                if (va < vb) return asc ? -1 : 1;
+                if (va > vb) return asc ? 1 : -1;
+                return 0;
+            });
+
+            // Re-append in sorted order
+            rows.forEach(function(row) { tbody.appendChild(row); });
+        });
+    });
+
+    updateCount();
+})();
+</script>
+
+{% endblock %}
