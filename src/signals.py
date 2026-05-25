@@ -30,7 +30,7 @@ def _synthesis_label(total_score):
     """Map the total score (-14 to +14) to a conviction label."""
     if total_score >= 7:
         return 'strong_buy'
-    elif total_score >= 3:
+    elif total_score >= 2:
         return 'buy'
     elif total_score <= -7:
         return 'strong_sell'
