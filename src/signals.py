@@ -422,8 +422,6 @@ def compute_signals_for_bars(bars):
         bar = bars[i]
         rsi_val = bar.get('rsi_14')
         vol_r = bar.get('vol_ratio')
-        close = bar.get('close')
-        bb_up = bar.get('bb_upper')
 
         # 1. Volume confirmation: strong_buy requires vol_ratio >= 0.8
         #    Low volume rallies are unsustainable
@@ -434,12 +432,6 @@ def compute_signals_for_bars(bars):
         #    Momentum exhaustion risk
         if total >= 7 and rsi_val is not None and rsi_val > 68:
             total = min(total, 4)  # cap at buy level
-
-        # 3. Above upper Bollinger Band: reduce score by 2
-        #    Price is overextended relative to recent range
-        if close is not None and bb_up is not None and close > bb_up:
-            if total > 0:
-                total = max(total - 2, 0)
 
         bars[i]['signal_ma'] = _score_to_label(ma)
         bars[i]['signal_rsi'] = _score_to_label(rsi)
