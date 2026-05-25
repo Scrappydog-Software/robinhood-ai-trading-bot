@@ -721,6 +721,13 @@ def research():
     )
 
 
+@app.route('/screener')
+def screener():
+    """Render the Stock Screener page — all analyzed stocks with search/sort."""
+    stocks = db.get_screener_stocks()
+    return render_template('screener.html', stocks=stocks)
+
+
 @app.route('/api/tickers/load', methods=['POST'])
 @csrf.exempt  # JSON API endpoint — CSRF token not applicable
 def api_tickers_load():
