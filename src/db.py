@@ -897,7 +897,7 @@ def get_screener_stocks():
         rows = conn.execute(
             "SELECT s.symbol, t.name, s.latest_signal, s.latest_score, "
             "s.bt_1yr_return_pct, s.backtest_return_pct, s.bt_1yr_trades, "
-            "s.backtest_trades, s.history_bars, t.market_cap "
+            "s.backtest_trades, s.history_bars, t.market_cap, t.primary_exchange "
             "FROM stock_stats s "
             "LEFT JOIN tickers t ON s.symbol = t.ticker "
             "ORDER BY s.symbol"
