@@ -21,6 +21,8 @@
         <label class="filter-checkbox"><input type="checkbox" value="sell"> <span class="rec rec-sell">sell</span></label>
         <label class="filter-checkbox"><input type="checkbox" value="strong_sell"> <span class="rec rec-strong_sell">strong_sell</span></label>
         <label class="filter-checkbox"><input type="checkbox" value="none"> <span class="muted">none</span></label>
+        <span class="filter-label" style="margin-left:1.5em;">|</span>
+        <label class="filter-checkbox"><input type="checkbox" id="fractional-filter" checked> Robinhood Fractional Only</label>
     </div>
 
     <div class="screener-status">
@@ -47,7 +49,9 @@
                 {% for stock in stocks %}
                 <tr data-symbol="{{ stock.symbol }}"
                     data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}"
-                    data-rec="{{ stock.latest_signal or 'none' }}">
+                    data-rec="{{ stock.latest_signal or 'none' }}"
+                    data-exchange="{{ stock.primary_exchange or '' }}"
+                    data-mcap="{{ stock.market_cap if stock.market_cap is not none else '' }}">
                     <td><strong>{{ stock.symbol }}</strong></td>
                     <td>{{ stock.name or '—' }}</td>
                     <td>
@@ -120,7 +124,8 @@
     var tbody = table.querySelector('tbody');
     var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
     var headers = table.querySelectorAll('th.sortable');
-    var filterCheckboxes = document.querySelectorAll('.screener-filters input[type="checkbox"]');
+    var filterCheckboxes = document.querySelectorAll('.screener-filters input[type="checkbox"][value]');
+    var fractionalCheckbox = document.getElementById('fractional-filter');
     var currentSort = { col: -1, asc: true };
 
     // --- localStorage helpers ---
@@ -146,7 +151,8 @@
         var state = {
             filters: activeFilters,
             sort: currentSort,
-            search: searchInput.value
+            search: searchInput.value,
+            fractionalOnly: fractionalCheckbox.checked
         };
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -166,13 +172,25 @@
         filterCheckboxes.forEach(function(cb) {
             if (cb.checked) activeFilters.push(cb.value);
         });
+        var fractionalOnly = fractionalCheckbox.checked;
+        var FRACTIONAL_EXCHANGES = ['XNYS', 'XNAS'];
+        var FRACTIONAL_MIN_MCAP = 25000000;
 
         rows.forEach(function(row) {
             var rec = row.getAttribute('data-rec') || 'none';
             var text = row.getAttribute('data-search') || '';
             var matchesFilter = activeFilters.length === 0 || activeFilters.indexOf(rec) !== -1;
             var matchesSearch = q === '' || text.indexOf(q) !== -1;
-            row.style.display = (matchesFilter && matchesSearch) ? '' : 'none';
+
+            var matchesFractional = true;
+            if (fractionalOnly) {
+                var exchange = row.getAttribute('data-exchange') || '';
+                var mcapRaw = row.getAttribute('data-mcap') || '';
+                var mcap = mcapRaw ? parseFloat(mcapRaw) : 0;
+                matchesFractional = FRACTIONAL_EXCHANGES.indexOf(exchange) !== -1 && mcap > FRACTIONAL_MIN_MCAP;
+            }
+
+            row.style.display = (matchesFilter && matchesSearch && matchesFractional) ? '' : 'none';
         });
 
         updateCount();
@@ -186,6 +204,7 @@
     filterCheckboxes.forEach(function(cb) {
         cb.addEventListener('change', applyFilters);
     });
+    fractionalCheckbox.addEventListener('change', applyFilters);
 
     // --- Sortable columns ---
     function getSortValue(row, col, type) {
@@ -276,6 +295,9 @@
     filterCheckboxes.forEach(function(cb) {
         cb.checked = state.filters.indexOf(cb.value) !== -1;
     });
+
+    // Restore fractional filter (default: true if not previously saved)
+    fractionalCheckbox.checked = (state.fractionalOnly !== undefined) ? state.fractionalOnly : true;
 
     // Restore search
     if (state.search) {
