@@ -11,6 +11,19 @@
 
     <div class="screener-controls">
         <input type="text" id="screener-search" placeholder="Search by symbol or name..." autocomplete="off">
+    </div>
+
+    <div class="screener-filters">
+        <span class="filter-label">Filter by recommendation:</span>
+        <label class="filter-checkbox"><input type="checkbox" value="strong_buy" checked> <span class="rec rec-strong_buy">strong_buy</span></label>
+        <label class="filter-checkbox"><input type="checkbox" value="buy"> <span class="rec rec-buy">buy</span></label>
+        <label class="filter-checkbox"><input type="checkbox" value="hold"> <span class="rec rec-hold">hold</span></label>
+        <label class="filter-checkbox"><input type="checkbox" value="sell"> <span class="rec rec-sell">sell</span></label>
+        <label class="filter-checkbox"><input type="checkbox" value="strong_sell"> <span class="rec rec-strong_sell">strong_sell</span></label>
+        <label class="filter-checkbox"><input type="checkbox" value="none"> <span class="muted">none</span></label>
+    </div>
+
+    <div class="screener-status">
         <span class="muted small" id="screener-count"></span>
     </div>
 </section>
@@ -32,7 +45,8 @@
             <tbody>
                 {% for stock in stocks %}
                 <tr data-symbol="{{ stock.symbol }}"
-                    data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}">
+                    data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}"
+                    data-rec="{{ stock.latest_signal or 'none' }}">
                     <td><strong>{{ stock.symbol }}</strong></td>
                     <td>{{ stock.name or '—' }}</td>
                     <td>
@@ -77,27 +91,84 @@
 
 <script>
 (function() {
+    var STORAGE_KEY = 'screener_state';
+    var DEFAULT_STATE = {
+        filters: ['strong_buy'],
+        sort: { col: 5, asc: false },
+        search: ''
+    };
+
     var searchInput = document.getElementById('screener-search');
     var countEl = document.getElementById('screener-count');
     var table = document.getElementById('screener-table');
     var tbody = table.querySelector('tbody');
     var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
     var headers = table.querySelectorAll('th.sortable');
+    var filterCheckboxes = document.querySelectorAll('.screener-filters input[type="checkbox"]');
     var currentSort = { col: -1, asc: true };
 
-    function updateCount() {
-        var visible = rows.filter(function(r) { return r.style.display !== 'none'; }).length;
-        countEl.textContent = visible + ' of ' + rows.length + ' shown';
+    // --- localStorage helpers ---
+    function loadState() {
+        try {
+            var raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+                var parsed = JSON.parse(raw);
+                // Validate structure
+                if (parsed && Array.isArray(parsed.filters) && parsed.sort && typeof parsed.sort.col === 'number') {
+                    return parsed;
+                }
+            }
+        } catch (e) { /* ignore parse errors */ }
+        return null;
     }
 
-    // --- Search/filter ---
-    searchInput.addEventListener('input', function() {
-        var q = this.value.toLowerCase().trim();
-        rows.forEach(function(row) {
-            var text = row.getAttribute('data-search') || '';
-            row.style.display = (q === '' || text.indexOf(q) !== -1) ? '' : 'none';
+    function saveState() {
+        var activeFilters = [];
+        filterCheckboxes.forEach(function(cb) {
+            if (cb.checked) activeFilters.push(cb.value);
         });
+        var state = {
+            filters: activeFilters,
+            sort: currentSort,
+            search: searchInput.value
+        };
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (e) { /* quota exceeded, ignore */ }
+    }
+
+    // --- Count display ---
+    function updateCount() {
+        var visible = rows.filter(function(r) { return r.style.display !== 'none'; }).length;
+        countEl.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + rows.length.toLocaleString() + ' stocks';
+    }
+
+    // --- Combined filter + search ---
+    function applyFilters() {
+        var q = searchInput.value.toLowerCase().trim();
+        var activeFilters = [];
+        filterCheckboxes.forEach(function(cb) {
+            if (cb.checked) activeFilters.push(cb.value);
+        });
+
+        rows.forEach(function(row) {
+            var rec = row.getAttribute('data-rec') || 'none';
+            var text = row.getAttribute('data-search') || '';
+            var matchesFilter = activeFilters.length === 0 || activeFilters.indexOf(rec) !== -1;
+            var matchesSearch = q === '' || text.indexOf(q) !== -1;
+            row.style.display = (matchesFilter && matchesSearch) ? '' : 'none';
+        });
+
         updateCount();
+        saveState();
+    }
+
+    // --- Search input ---
+    searchInput.addEventListener('input', applyFilters);
+
+    // --- Filter checkboxes ---
+    filterCheckboxes.forEach(function(cb) {
+        cb.addEventListener('change', applyFilters);
     });
 
     // --- Sortable columns ---
@@ -113,10 +184,55 @@
         return text.toLowerCase();
     }
 
+    function sortByCol(col, asc) {
+        var th = table.querySelector('th[data-col="' + col + '"]');
+        if (!th) return;
+        var type = th.getAttribute('data-type');
+
+        currentSort = { col: col, asc: asc };
+
+        // Update arrow indicators
+        headers.forEach(function(h) {
+            h.querySelector('.sort-arrow').textContent = '';
+            h.classList.remove('sort-active');
+        });
+        th.querySelector('.sort-arrow').textContent = asc ? ' ▲' : ' ▼';
+        th.classList.add('sort-active');
+
+        // Sort rows
+        rows.sort(function(a, b) {
+            var va = getSortValue(a, col, type);
+            var vb = getSortValue(b, col, type);
+            // For descending numeric sort, put -Infinity items at the bottom
+            // (items without data). For 2yr return fallback to 1yr return.
+            if (col === 5 && type === 'number') {
+                if (va === -Infinity && vb === -Infinity) {
+                    // Both missing 2yr — fall back to 1yr (col 4)
+                    va = getSortValue(a, 4, 'number');
+                    vb = getSortValue(b, 4, 'number');
+                } else if (va === -Infinity) {
+                    // Try 1yr for a
+                    var fallback = getSortValue(a, 4, 'number');
+                    if (fallback !== -Infinity) va = fallback;
+                } else if (vb === -Infinity) {
+                    // Try 1yr for b
+                    var fallback = getSortValue(b, 4, 'number');
+                    if (fallback !== -Infinity) vb = fallback;
+                }
+            }
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+        });
+
+        // Re-append in sorted order
+        rows.forEach(function(row) { tbody.appendChild(row); });
+        saveState();
+    }
+
     headers.forEach(function(th) {
         th.addEventListener('click', function() {
             var col = parseInt(this.getAttribute('data-col'), 10);
-            var type = this.getAttribute('data-type');
             var asc;
 
             if (currentSort.col === col) {
@@ -124,31 +240,30 @@
             } else {
                 asc = true;
             }
-            currentSort = { col: col, asc: asc };
 
-            // Update arrow indicators
-            headers.forEach(function(h) {
-                h.querySelector('.sort-arrow').textContent = '';
-                h.classList.remove('sort-active');
-            });
-            this.querySelector('.sort-arrow').textContent = asc ? ' ▲' : ' ▼';
-            this.classList.add('sort-active');
-
-            // Sort rows
-            rows.sort(function(a, b) {
-                var va = getSortValue(a, col, type);
-                var vb = getSortValue(b, col, type);
-                if (va < vb) return asc ? -1 : 1;
-                if (va > vb) return asc ? 1 : -1;
-                return 0;
-            });
-
-            // Re-append in sorted order
-            rows.forEach(function(row) { tbody.appendChild(row); });
+            sortByCol(col, asc);
         });
     });
 
-    updateCount();
+    // --- Initialize from localStorage or defaults ---
+    var savedState = loadState();
+    var state = savedState || DEFAULT_STATE;
+
+    // Restore filter checkboxes
+    filterCheckboxes.forEach(function(cb) {
+        cb.checked = state.filters.indexOf(cb.value) !== -1;
+    });
+
+    // Restore search
+    if (state.search) {
+        searchInput.value = state.search;
+    }
+
+    // Apply sort (2yr return desc by default)
+    sortByCol(state.sort.col, state.sort.asc);
+
+    // Apply filters after sort
+    applyFilters();
 })();
 </script>
 
