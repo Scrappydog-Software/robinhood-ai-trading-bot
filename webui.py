@@ -343,49 +343,88 @@ def api_stock_detail(symbol):
 @app.route('/api/stock/<symbol>/analyze', methods=['POST'])
 @csrf.exempt
 def api_stock_analyze(symbol):
-    """On-demand single-stock AI analysis with historical storage.
+    """On-demand single-stock AI analysis using pre-computed DB data.
 
-    Fetches enrichment data from Robinhood, sends to Claude for a
-    buy/sell/hold decision with rationale, stores the result in
-    stock_analysis table, and returns the decision.
+    Reads all indicators from stock_history (already computed), sends to
+    Claude Sonnet for a decision with rationale. No live API calls needed.
     """
     symbol = symbol.upper()
     logger.info(f"WebUI: on-demand analysis requested for {symbol}")
     try:
-        account_info = robinhood.get_account_info()
+        # Get latest bar with all indicators from SQLite (instant)
+        bars = db.get_stock_history_bars(symbol)
+        stats = db.get_stock_stats(symbol)
+        ticker = db.get_ticker_by_symbol(symbol)
 
-        # Position data from Robinhood
-        holdings = robinhood.get_portfolio_stocks()
-        if holdings and symbol in holdings:
-            stock_data = robinhood.extract_my_stocks_data(holdings[symbol])
-        else:
-            stock_data = {
-                'current_price': 0,
-                'my_quantity': 0,
-                'my_average_buy_price': 0,
-            }
+        if not bars:
+            return jsonify({'ok': False, 'error': f'No history data for {symbol}. Load history first.'}), 404
 
-        # Current price and market data from Massive API
-        logger.info(f"WebUI: fetching market data from Massive API for {symbol}...")
-        price = massive_client.fetch_current_price(symbol)
-        if price:
-            stock_data['current_price'] = round(price, 2)
-        massive_client.enrich_stock_data(symbol, stock_data)
+        last_bar = bars[-1]
+        stock_data = {
+            'symbol': symbol,
+            'name': ticker.get('name') if ticker else symbol,
+            'current_price': last_bar.get('close'),
+            'bar_date': last_bar.get('bar_date'),
+            'open': last_bar.get('open'),
+            'high': last_bar.get('high'),
+            'low': last_bar.get('low'),
+            'close': last_bar.get('close'),
+            'volume': last_bar.get('volume'),
+            'sma_10': last_bar.get('sma_10'),
+            'sma_20': last_bar.get('sma_20'),
+            'sma_50': last_bar.get('sma_50'),
+            'sma_200': last_bar.get('sma_200'),
+            'ema_12': last_bar.get('ema_12'),
+            'ema_26': last_bar.get('ema_26'),
+            'rsi_14': last_bar.get('rsi_14'),
+            'macd_line': last_bar.get('macd_line'),
+            'macd_signal': last_bar.get('macd_signal'),
+            'macd_histogram': last_bar.get('macd_histogram'),
+            'bb_upper': last_bar.get('bb_upper'),
+            'bb_lower': last_bar.get('bb_lower'),
+            'bb_width': last_bar.get('bb_width'),
+            'vol_ratio': last_bar.get('vol_ratio'),
+            'obv': last_bar.get('obv'),
+            'market_cap': ticker.get('market_cap') if ticker else None,
+            'signal_score': last_bar.get('signal_score'),
+            'signal_synthesis': last_bar.get('signal_synthesis'),
+        }
 
-        # Analyst ratings from Robinhood (account-specific)
-        ratings_data = robinhood.get_ratings(symbol)
-        stock_data = robinhood.enrich_with_analyst_ratings(stock_data, ratings_data)
-        logger.info(f"WebUI: market data enriched for {symbol}, sending to Claude...")
+        # Add extension % for context
+        if stock_data.get('sma_200') and stock_data['sma_200'] > 0 and stock_data.get('close'):
+            stock_data['extension_above_sma200_pct'] = round(
+                (stock_data['close'] - stock_data['sma_200']) / stock_data['sma_200'] * 100, 1
+            )
+
+        # Add backtest context
+        if stats:
+            stock_data['backtest_1yr_return'] = stats.get('bt_1yr_return_pct')
+            stock_data['backtest_2yr_return'] = stats.get('backtest_return_pct')
+
+        # Add recent price context (last 5 bars)
+        if len(bars) >= 5:
+            stock_data['recent_5_day_prices'] = [
+                {'date': b['bar_date'], 'close': b['close']} for b in bars[-5:]
+            ]
+
+        # Remove None values for cleaner prompt
+        stock_data = {k: v for k, v in stock_data.items() if v is not None}
 
         prompt = (
-            f"Analyze this single stock and provide a buy, sell, or hold recommendation.\n\n"
-            f"**Stock Data:**\n```json\n{json.dumps({symbol: stock_data}, indent=1)}\n```\n\n"
-            f"**Account Buying Power:** ${account_info.get('buying_power', 'unknown')}\n\n"
+            f"You are a systematic technical analyst. Analyze this stock using the data below.\n\n"
+            f"**Technical Analysis Framework:**\n"
+            f"1. MA Crossover: SMA alignment, Golden/Death Cross, overextension (>30% above SMA200 = caution)\n"
+            f"2. RSI: <30 oversold, >70 overbought, divergence signals\n"
+            f"3. MACD: histogram direction, crossovers, zero-line position\n"
+            f"4. RSI+MACD Combined: both must agree for strong conviction\n"
+            f"5. Bollinger Bands: position within bands, band width\n"
+            f"6. Volume: ratio vs 20-day avg, OBV trend\n"
+            f"7. Synthesis: count aligned signals for conviction\n\n"
+            f"**Stock Data (all indicators pre-computed):**\n```json\n{json.dumps(stock_data, indent=1)}\n```\n\n"
             f"**Response Format:**\n"
             f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<strong_buy|buy|hold|sell|strong_sell>", '
-            f'"quantity": <number>, "rationale": "<detailed explanation referencing RSI, VWAP, '
-            f'moving averages, analyst ratings, and any other relevant data points>"}}\n\n'
-            f"Provide only the JSON output with no additional text."
+            f'"quantity": 0, "rationale": "<detailed explanation referencing the specific indicator values above>"}}\n\n'
+            f"Be specific — reference actual numbers from the data. Provide only JSON."
         )
 
         ai_response = claude.make_ai_request(prompt)
@@ -399,7 +438,6 @@ def api_stock_analyze(symbol):
 
         # Store in stock_analysis with source='on_demand'
         analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        analyst_summary = stock_data.get('analyst_summary')
         try:
             db.insert_stock_analysis({
                 'symbol': symbol,
@@ -407,14 +445,14 @@ def api_stock_analyze(symbol):
                 'decision': result.get('decision', ''),
                 'quantity': result.get('quantity'),
                 'rationale': result.get('rationale'),
-                'price': stock_data.get('current_price'),
-                'rsi': stock_data.get('rsi'),
-                'vwap': stock_data.get('vwap'),
-                'ma_50': stock_data.get('50_day_mavg_price'),
-                'ma_200': stock_data.get('200_day_mavg_price'),
-                'analyst_summary': json.dumps(analyst_summary) if analyst_summary else None,
-                'held_quantity': stock_data.get('my_quantity'),
-                'held_avg_price': stock_data.get('my_average_buy_price'),
+                'price': stock_data.get('close'),
+                'rsi': stock_data.get('rsi_14'),
+                'vwap': None,
+                'ma_50': stock_data.get('sma_50'),
+                'ma_200': stock_data.get('sma_200'),
+                'analyst_summary': None,
+                'held_quantity': 0,
+                'held_avg_price': 0,
                 'source': 'on_demand',
             })
         except Exception as e:
