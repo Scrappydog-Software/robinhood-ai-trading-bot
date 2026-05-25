@@ -125,6 +125,21 @@ def fetch_ticker_details(ticker):
     return client.get_ticker_details(ticker)
 
 
+def fetch_market_cap(symbol):
+    """Fetch the market cap for a single ticker symbol.
+
+    Calls fetch_ticker_details and extracts the market_cap attribute.
+    Returns the market cap as a float, or None if unavailable.
+    """
+    try:
+        details = fetch_ticker_details(symbol)
+        if details and hasattr(details, 'market_cap'):
+            return details.market_cap
+    except Exception as e:
+        logger.error(f"MassiveClient: error fetching market cap for {symbol}: {e}")
+    return None
+
+
 def fetch_previous_close(symbol):
     """Fetch the previous day's close data for a symbol.
 
