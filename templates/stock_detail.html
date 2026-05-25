@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div class="stock-detail-header">
+        <h2>{{ ticker.name if ticker and ticker.name else symbol }}</h2>
+        <span class="stock-symbol-badge">{{ symbol }}</span>
+        {% if ticker and ticker.primary_exchange %}
+        <span class="stock-exchange-badge">{{ ticker.primary_exchange }}</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recommendation -->
+<div class="card">
+    <h2>Recommendation</h2>
+    {% if stats and stats.latest_signal %}
+    <div class="stock-detail-rec">
+        <span class="rec rec-{{ stats.latest_signal }}" style="font-size: 18px; font-weight: 700;">
+            {{ stats.latest_signal | upper }}
+        </span>
+        {% if stats.latest_score is not none %}
+        <span class="muted" style="margin-left: 12px; font-size: 14px;">Score: {{ stats.latest_score }}</span>
+        {% endif %}
+    </div>
+    {% else %}
+    <p class="muted">No recommendation available. Load history and compute signals first.</p>
+    {% endif %}
+</div>
+
+<!-- Backtest Performance -->
+<div class="card">
+    <h2>Backtest Performance</h2>
+    {% if stats and (stats.bt_1yr_return_pct is not none or stats.backtest_return_pct is not none) %}
+    <dl class="kv">
+        {% if stats.bt_1yr_return_pct is not none %}
+        <dt>1-Year Return</dt>
+        <dd class="{{ 'rec-buy' if stats.bt_1yr_return_pct >= 0 else 'rec-sell' }}" style="font-weight: 700; font-size: 16px;">
+            {{ '+' if stats.bt_1yr_return_pct >= 0 }}{{ stats.bt_1yr_return_pct }}%
+        </dd>
+        <dt>$100 &rarr;</dt>
+        <dd>${{ stats.bt_1yr_final }} ({{ stats.bt_1yr_trades }} trades)</dd>
+        {% endif %}
+
+        {% if stats.backtest_return_pct is not none %}
+        <dt>2-Year Return</dt>
+        <dd class="{{ 'rec-buy' if stats.backtest_return_pct >= 0 else 'rec-sell' }}" style="font-weight: 700; font-size: 16px;">
+            {{ '+' if stats.backtest_return_pct >= 0 }}{{ stats.backtest_return_pct }}%
+        </dd>
+        <dt>$100 &rarr;</dt>
+        <dd>${{ stats.backtest_final }} ({{ stats.backtest_trades }} trades)</dd>
+        {% else %}
+        <dt>2-Year Return</dt>
+        <dd class="muted">Insufficient history (need 2 years)</dd>
+        {% endif %}
+    </dl>
+    {% else %}
+    <p class="muted">No backtest data. Load history and compute signals first.</p>
+    {% endif %}
+</div>
+
+<!-- Ticker Details -->
+<div class="card">
+    <h2>Ticker Details</h2>
+    {% if ticker %}
+    <dl class="kv">
+        <dt>Name</dt><dd>{{ ticker.name or '&mdash;' | safe }}</dd>
+        <dt>Market</dt><dd>{{ ticker.market or '&mdash;' | safe }}</dd>
+        <dt>Type</dt><dd>{{ ticker.type or '&mdash;' | safe }}</dd>
+        <dt>Exchange</dt><dd>{{ ticker.primary_exchange or '&mdash;' | safe }}</dd>
+        <dt>Market Cap</dt>
+        <dd>
+            {% if ticker.market_cap %}
+                {% if ticker.market_cap >= 1000000000000 %}
+                    ${{ "%.1f" | format(ticker.market_cap / 1000000000000) }}T
+                {% elif ticker.market_cap >= 1000000000 %}
+                    ${{ "%.1f" | format(ticker.market_cap / 1000000000) }}B
+                {% elif ticker.market_cap >= 1000000 %}
+                    ${{ "%.1f" | format(ticker.market_cap / 1000000) }}M
+                {% else %}
+                    ${{ "{:,.0f}".format(ticker.market_cap) }}
+                {% endif %}
+            {% else %}
+                &mdash;
+            {% endif %}
+        </dd>
+        <dt>Active</dt><dd>{{ 'Yes' if ticker.active == 1 else ('No' if ticker.active == 0 else '&mdash;') | safe }}</dd>
+        <dt>Currency</dt><dd>{{ ticker.currency_name or '&mdash;' | safe }}</dd>
+        {% if ticker.cik %}
+        <dt>CIK</dt><dd>{{ ticker.cik }}</dd>
+        {% endif %}
+        {% if ticker.composite_figi %}
+        <dt>FIGI</dt><dd>{{ ticker.composite_figi }}</dd>
+        {% endif %}
+    </dl>
+    {% else %}
+    <p class="muted">No ticker data in database. Load tickers from the Research page.</p>
+    {% endif %}
+</div>
+
+<!-- Historical Data -->
+<div class="card">
+    <h2>Historical Data</h2>
+    {% if history_status and history_status.has_data %}
+    <dl class="kv">
+        <dt>Bar Count</dt><dd>{{ history_status.bar_count }}</dd>
+        <dt>From</dt><dd>{{ history_status.earliest_date }}</dd>
+        <dt>To</dt><dd>{{ history_status.latest_date }}</dd>
+    </dl>
+    {% else %}
+    <p class="muted">No historical data loaded.</p>
+    {% endif %}
+</div>
+
+<!-- Actions -->
+<div class="card">
+    <h2>Actions</h2>
+    <div class="stock-detail-actions">
+        {% if history_status and history_status.has_data %}
+        <a href="/history/{{ symbol }}" class="btn btn-sm" style="background: var(--bg); border: 1px solid var(--accent); color: var(--accent);">View Price History</a>
+        {% else %}
+        <span class="btn btn-sm" style="opacity: 0.4; cursor: not-allowed; background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);">View Price History (no data)</span>
+        {% endif %}
+        <button class="btn btn-analyze" id="btn-request-analysis" data-symbol="{{ symbol }}">Request Analysis (AI)</button>
+    </div>
+    <div id="analysis-result" style="margin-top: 16px;"></div>
+</div>
+
+<script>
+(function() {
+    var btn = document.getElementById('btn-request-analysis');
+    var resultDiv = document.getElementById('analysis-result');
+
+    function esc(text) {
+        if (text === null || text === undefined) return '&mdash;';
+        var d = document.createElement('div');
+        d.textContent = String(text);
+        return d.innerHTML;
+    }
+
+    btn.addEventListener('click', function() {
+        var symbol = this.getAttribute('data-symbol');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Analyzing with Claude&hellip;';
+        resultDiv.innerHTML = '';
+
+        fetch('/api/stock/' + encodeURIComponent(symbol) + '/analyze', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.ok && data.analysis) {
+                    var a = data.analysis;
+                    var dec = a.decision || 'unknown';
+                    var cls = 'rec-' + dec.toLowerCase();
+                    var html = '<div class="card" style="border-color: var(--accent);">';
+                    html += '<h2>AI Analysis <span class="fresh-badge">fresh</span></h2>';
+                    html += '<dl class="kv">';
+                    html += '<dt>Decision</dt><dd class="rec ' + cls + '" style="font-size:16px;font-weight:700;">' + esc(dec) + '</dd>';
+                    html += '<dt>Quantity</dt><dd>' + esc(a.quantity) + '</dd>';
+                    html += '</dl>';
+                    if (a.rationale) {
+                        html += '<div class="modal-rationale" style="margin-top:12px;"><strong>Rationale:</strong> ' + esc(a.rationale) + '</div>';
+                    }
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    btn.disabled = false;
+                    btn.textContent = 'Re-analyze (AI)';
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Request Analysis (AI)';
+                    resultDiv.innerHTML = '<p class="error">Analysis failed: ' + esc(data.error || 'Unknown error') + '</p>';
+                }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.textContent = 'Request Analysis (AI)';
+                resultDiv.innerHTML = '<p class="error">Error: ' + esc(err) + '</p>';
+            });
+    });
+})();
+</script>
+{% endblock %}

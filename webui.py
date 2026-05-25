@@ -592,6 +592,22 @@ def api_backtest_analyze(symbol):
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/stock/<symbol>')
+def stock_detail_page(symbol):
+    """Full-page stock detail — reads ONLY from SQLite for instant load."""
+    symbol = symbol.upper()
+    ticker = db.get_ticker_by_symbol(symbol)
+    stats = db.get_stock_stats(symbol)
+    history_status = db.get_stock_history_status(symbol)
+    return render_template(
+        'stock_detail.html',
+        symbol=symbol,
+        ticker=ticker,
+        stats=stats,
+        history_status=history_status,
+    )
+
+
 @app.route('/history/<symbol>')
 def stock_history_page(symbol):
     """Full-page stock price history with chart and data table."""
