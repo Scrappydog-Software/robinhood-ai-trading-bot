@@ -397,6 +397,10 @@ def score_volume(bars, i):
 def compute_signals_for_bars(bars):
     """Evaluate all 7 signal sections for each bar in a list.
 
+    Position-aware: tracks a simulated position to apply cumulative
+    drawdown sell pressure. If holding at a loss with negative MACD,
+    the score is penalized to trigger earlier exits on slow bleeds.
+
     Args:
         bars: list of dicts (oldest first) with all indicator columns populated.
 
@@ -405,6 +409,11 @@ def compute_signals_for_bars(bars):
         signal_ma, signal_rsi, signal_macd, signal_rsi_macd,
         signal_bb, signal_volume, signal_synthesis, signal_score
     """
+    # Position tracking for drawdown awareness
+    position_state = 'waiting'  # waiting | holding
+    buy_price = 0.0
+    bars_held = 0
+
     for i in range(len(bars)):
         # Need at least some history context for meaningful signals
         if i < 14:
@@ -429,18 +438,38 @@ def compute_signals_for_bars(bars):
 
         # --- Global filters (applied after individual sections) ---
         bar = bars[i]
+        close = bar.get('close') or 0
         rsi_val = bar.get('rsi_14')
         vol_r = bar.get('vol_ratio')
+        macd_hist = bar.get('macd_histogram')
 
         # 1. Volume confirmation: strong_buy requires vol_ratio >= 0.8
-        #    Low volume rallies are unsustainable
         if total >= 7 and vol_r is not None and vol_r < 0.8:
-            total = min(total, 4)  # cap at buy level
+            total = min(total, 4)
 
         # 2. RSI overbought suppression: no strong_buy when RSI > 68
-        #    Momentum exhaustion risk
         if total >= 7 and rsi_val is not None and rsi_val > 68:
-            total = min(total, 4)  # cap at buy level
+            total = min(total, 4)
+
+        # 3. Cumulative drawdown awareness (position-aware)
+        if position_state == 'holding' and buy_price > 0 and close > 0:
+            bars_held += 1
+            drawdown_pct = (close - buy_price) / buy_price
+
+            # Tier 1: Down >15% with negative MACD → sell pressure (-3)
+            if drawdown_pct <= -0.15 and macd_hist is not None and macd_hist < 0:
+                total -= 3
+
+            # Tier 2: Down >25% → strong sell pressure (-5) regardless
+            elif drawdown_pct <= -0.25:
+                total -= 5
+
+            # Tier 3: Down >10% for 10+ bars with negative MACD → sell pressure (-2)
+            elif drawdown_pct <= -0.10 and bars_held >= 10 and macd_hist is not None and macd_hist < 0:
+                total -= 2
+
+        # Determine final signal
+        synthesis = _synthesis_label(total)
 
         bars[i]['signal_ma'] = _score_to_label(ma)
         bars[i]['signal_rsi'] = _score_to_label(rsi)
@@ -448,7 +477,17 @@ def compute_signals_for_bars(bars):
         bars[i]['signal_rsi_macd'] = _score_to_label(rsi_macd)
         bars[i]['signal_bb'] = _score_to_label(bb)
         bars[i]['signal_volume'] = _score_to_label(volume)
-        bars[i]['signal_synthesis'] = _synthesis_label(total)
+        bars[i]['signal_synthesis'] = synthesis
         bars[i]['signal_score'] = total
+
+        # Update position state based on final signal
+        if position_state == 'waiting' and synthesis in ('buy', 'strong_buy'):
+            position_state = 'holding'
+            buy_price = close
+            bars_held = 0
+        elif position_state == 'holding' and synthesis in ('sell', 'strong_sell'):
+            position_state = 'waiting'
+            buy_price = 0.0
+            bars_held = 0
 
     return bars
