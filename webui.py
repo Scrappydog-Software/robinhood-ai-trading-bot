@@ -543,24 +543,44 @@ def api_backtest_analyze(symbol):
 
             bars_data = []
             for bar in batch:
-                bars_data.append({
+                entry = {
                     'date': bar['bar_date'],
                     'open': bar['open'],
                     'high': bar['high'],
                     'low': bar['low'],
                     'close': bar['close'],
                     'volume': bar['volume'],
-                    'vwap': bar['vwap'],
-                })
+                }
+                if bar.get('sma_50') is not None:
+                    entry['sma_50'] = round(bar['sma_50'], 2)
+                if bar.get('sma_200') is not None:
+                    entry['sma_200'] = round(bar['sma_200'], 2)
+                if bar.get('rsi_14') is not None:
+                    entry['rsi_14'] = round(bar['rsi_14'], 1)
+                if bar.get('macd_histogram') is not None:
+                    entry['macd_histogram'] = round(bar['macd_histogram'], 3)
+                if bar.get('bb_upper') is not None:
+                    entry['bb_upper'] = round(bar['bb_upper'], 2)
+                if bar.get('bb_lower') is not None:
+                    entry['bb_lower'] = round(bar['bb_lower'], 2)
+                if bar.get('vol_ratio') is not None:
+                    entry['vol_ratio'] = round(bar['vol_ratio'], 2)
+                bars_data.append(entry)
 
             prompt = (
-                f"You are analyzing historical daily price data for {symbol}.\n\n"
-                f"For each trading day below, provide a buy/sell/hold recommendation "
-                f"based on the OHLCV data and price action patterns.\n\n"
-                f"**Data:**\n```json\n{json.dumps(bars_data, indent=1)}\n```\n\n"
+                f"You are a systematic technical analyst evaluating {symbol}.\n\n"
+                f"**Analysis Framework (apply these rules):**\n"
+                f"1. MA Crossover: SMA(50) vs SMA(200) alignment. Triple alignment (price>50>200) = strong buy. Price below SMA(200) = no longs.\n"
+                f"2. RSI: Below 30 crossing up = buy. Above 70 crossing down = sell. IMPORTANT: If price is >25% above SMA(200), the stock is overextended — downgrade buy signals.\n"
+                f"3. MACD: Histogram positive and growing = bullish momentum. Negative and falling = bearish.\n"
+                f"4. RSI+MACD Combined: Both must agree for strong signals. Conflicting = hold.\n"
+                f"5. Bollinger Bands: Close above upper band with low volume = overextended. Close below lower band = oversold.\n"
+                f"6. Volume: Vol_ratio > 1.5 confirms breakouts. Below 0.8 = suspect move.\n"
+                f"7. Overextension Rule: If close is >30% above SMA(200), classify as hold regardless of other signals — the mean reversion risk is too high.\n\n"
+                f"**Data (with pre-computed indicators):**\n```json\n{json.dumps(bars_data, indent=1)}\n```\n\n"
                 f"**Response Format:**\nReturn a JSON array with one entry per day:\n"
                 f'[{{"date": "YYYY-MM-DD", "recommendation": "strong_buy|buy|hold|sell|strong_sell"}}]\n\n'
-                f"Provide only the JSON output with no additional text."
+                f"Apply the framework rules strictly. Provide only the JSON output with no additional text."
             )
 
             resp = haiku_client.messages.create(

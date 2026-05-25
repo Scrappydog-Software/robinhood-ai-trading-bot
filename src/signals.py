@@ -73,7 +73,7 @@ def score_ma(bars, i):
     # Triple MA alignment (high conviction)
     if sma200 is not None:
         if sma10 > sma50 > sma200:
-            return 2  # strong buy
+            score = 2  # strong buy (may be capped by overextension below)
         elif sma10 < sma50 < sma200:
             return -2  # strong sell
 
@@ -111,6 +111,12 @@ def score_ma(bars, i):
     # Long-term filter: downgrade buy signals if below SMA(200)
     if sma200 is not None and close is not None:
         if close < sma200 and score > 0:
+            score = 0
+
+    # Overextension filter: if price is >30% above SMA(200), cap at hold
+    if sma200 is not None and close is not None and sma200 > 0:
+        extension_pct = (close - sma200) / sma200
+        if extension_pct > 0.30 and score > 0:
             score = 0
 
     return score

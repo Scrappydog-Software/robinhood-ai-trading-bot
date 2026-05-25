@@ -437,11 +437,14 @@ def get_unanalyzed_bars(symbol):
 
 
 def get_all_bars_for_analysis(symbol):
-    """Return ALL bars for a symbol, oldest first (for full recompute)."""
+    """Return ALL bars for a symbol with indicators, oldest first (for full recompute)."""
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT bar_date, open, high, low, close, volume, vwap "
+            "SELECT bar_date, open, high, low, close, volume, vwap, "
+            "sma_10, sma_50, sma_200, rsi_14, "
+            "macd_line, macd_signal, macd_histogram, "
+            "bb_upper, bb_lower, bb_width, vol_ratio, obv "
             "FROM stock_history WHERE symbol = ? "
             "ORDER BY bar_date ASC",
             (symbol.upper(),)
