@@ -292,14 +292,14 @@
             if (e.key === 'Escape' && backdrop.style.display !== 'none') closeModal();
         });
 
-        // Delegate click on any TR with data-symbol
+        // Delegate click on any TR with data-symbol — navigate to full detail page
         document.addEventListener('click', function(e) {
             var tr = e.target.closest('tr[data-symbol]');
             if (!tr) return;
             // Don't intercept clicks on buttons, links, or form elements inside the row
             if (e.target.closest('button, a, input, select, form')) return;
             e.preventDefault();
-            openModal(tr.getAttribute('data-symbol'));
+            window.location = '/stock/' + encodeURIComponent(tr.getAttribute('data-symbol'));
         });
     })();
     </script>
