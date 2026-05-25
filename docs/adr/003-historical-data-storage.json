@@ -1,0 +1,146 @@
+{
+  "adr": {
+    "id": "ADR-003",
+    "title": "Historical Stock Data Storage for Backtesting",
+    "status": "Proposed",
+    "date": "2026-05-23",
+    "deciders": ["Eric Bowen"]
+  },
+  "decisions": {
+    "stock_analysis_table": {
+      "table": "stock_analysis",
+      "primary_key": "id INTEGER AUTOINCREMENT",
+      "columns": [
+        "id INTEGER PRIMARY KEY AUTOINCREMENT",
+        "symbol TEXT NOT NULL",
+        "analyzed_at TEXT NOT NULL (auto-populated)",
+        "decision TEXT NOT NULL ('buy'|'sell'|'hold')",
+        "quantity REAL NOT NULL DEFAULT 0",
+        "rationale TEXT",
+        "price REAL",
+        "rsi REAL",
+        "vwap REAL",
+        "ma_50 REAL",
+        "ma_200 REAL",
+        "analyst_summary TEXT (JSON string)",
+        "quantity_held REAL",
+        "avg_buy_price REAL",
+        "source TEXT NOT NULL DEFAULT 'loop' ('loop'|'manual')"
+      ],
+      "indexes": [
+        "idx_analysis_symbol (symbol)",
+        "idx_analysis_symbol_date (symbol, analyzed_at)"
+      ]
+    },
+    "stock_history_table": {
+      "table": "stock_history",
+      "primary_key": "(symbol, bar_date) composite",
+      "columns": [
+        "symbol TEXT NOT NULL",
+        "bar_date TEXT NOT NULL ('YYYY-MM-DD')",
+        "open REAL NOT NULL",
+        "high REAL NOT NULL",
+        "low REAL NOT NULL",
+        "close REAL NOT NULL",
+        "volume INTEGER NOT NULL",
+        "vwap REAL",
+        "loaded_at TEXT NOT NULL (auto-populated)"
+      ],
+      "indexes": [
+        "idx_history_symbol (symbol)"
+      ]
+    },
+    "massive_api_strategy": {
+      "function": "fetch_daily_history(ticker)",
+      "endpoint": "get_aggs(ticker, 1, 'day', from_, to, limit=50000)",
+      "range": "2 years (~730 days)",
+      "rows_per_call": "~500",
+      "calls_per_ticker": 1,
+      "rate_limit": "5 calls/min (non-issue for single-call strategy)"
+    },
+    "api_endpoints": {
+      "load_history": {
+        "method": "POST",
+        "path": "/api/stock/<symbol>/load-history",
+        "csrf_exempt": true,
+        "response": "{ok, symbol, bars_loaded, from_date, to_date}"
+      }
+    },
+    "analysis_storage_hook": {
+      "automated": {
+        "location": "main.py write_last_decisions()",
+        "change": "Accept portfolio_overview + watchlist_overview params, call db.insert_stock_analyses()",
+        "source_value": "loop"
+      },
+      "manual": {
+        "endpoint": "POST /api/stock/<symbol>/analyze (future Phase 2)",
+        "source_value": "manual",
+        "status": "deferred"
+      }
+    },
+    "db_functions": {
+      "module": "src/db.py",
+      "new_functions": [
+        "insert_stock_analyses(decisions, portfolio_overview, watchlist_overview, source)",
+        "upsert_stock_history(rows)",
+        "get_stock_analyses(symbol, limit, offset)",
+        "get_stock_history(symbol, from_date, to_date)",
+        "get_stock_history_coverage(symbol)"
+      ]
+    },
+    "modal_ui": {
+      "load_history_button": "Below Ticker Details section in stock detail modal",
+      "coverage_display": "Shows date range and bar count when data exists",
+      "request_analysis_button": "Deferred to Phase 2"
+    },
+    "schema_migration": {
+      "strategy": "Append CREATE TABLE IF NOT EXISTS to _SCHEMA_SQL in src/db.py",
+      "idempotent": true,
+      "existing_tables_altered": false
+    }
+  },
+  "files_changed": {
+    "new": [
+      "docs/adr/003-historical-data-storage.md",
+      "docs/adr/003-historical-data-storage.json"
+    ],
+    "modified": [
+      "src/db.py",
+      "src/api/massive_client.py",
+      "webui.py",
+      "main.py",
+      "templates/base.html"
+    ]
+  },
+  "phase_2": {
+    "planned": [
+      "POST /api/stock/<symbol>/analyze endpoint for on-demand AI analysis",
+      "Request Analysis button in modal UI",
+      "Backtesting module consuming stock_analysis + stock_history",
+      "Retention policy for stock_analysis table"
+    ]
+  },
+  "memory": {
+    "key_decisions": [
+      "stock_analysis uses autoincrement PK (multiple analyses per stock per day)",
+      "stock_history uses composite PK (symbol, bar_date) — natural key, dedup on re-load",
+      "Enrichment data denormalized into stock_analysis — captures what AI saw at decision time",
+      "get_aggs with limit=50000 returns all 2yr daily bars in single call",
+      "analyst_ratings text NOT stored (verbose, not useful for quant backtesting)",
+      "analyst_summary stored as JSON string (small dict, displayed as-is)",
+      "source column distinguishes loop vs manual analyses",
+      "Schema migration is purely additive — no ALTER TABLE needed"
+    ],
+    "patterns_preserved": [
+      "_write_lock for all write operations",
+      "WAL mode on every connection",
+      "INSERT OR REPLACE for idempotent upserts",
+      "CSRF-exempt JSON API endpoints",
+      "_connect() per operation, caller closes"
+    ],
+    "growth_estimates": {
+      "stock_analysis": "~480k rows/year at 40 stocks, 10min intervals, 8hr/day, 252 trading days",
+      "stock_history": "~500 rows per ticker, static once loaded"
+    }
+  }
+}

@@ -111,22 +111,21 @@ input[type="text"]:focus { outline: none; border-color: var(--accent); }
 /* Recommendations section — color the Decision cell (2nd column) and add a
    subtle left accent on the row so buy/sell distinctions are visible at a
    glance without being garish on the dark theme. */
-tr.buy td:nth-child(2) {
-    color: var(--success);
-    border-left: 2px solid var(--success);
+tr.strong_buy td:nth-child(2),
+tr.buy td:nth-child(2),
+tr.sell td:nth-child(2),
+tr.strong_sell td:nth-child(2),
+tr.hold td:nth-child(2) {
     text-transform: uppercase;
     font-size: 12px;
     letter-spacing: 0.5px;
     font-weight: 600;
 }
-tr.sell td:nth-child(2) {
-    color: var(--danger);
-    border-left: 2px solid var(--danger);
-    text-transform: uppercase;
-    font-size: 12px;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-}
+tr.strong_buy td:nth-child(2) { color: #00e676; border-left: 3px solid #00e676; }
+tr.buy td:nth-child(2) { color: var(--success); border-left: 2px solid var(--success); }
+tr.hold td:nth-child(2) { color: var(--text-muted); border-left: 2px solid var(--text-muted); }
+tr.sell td:nth-child(2) { color: var(--danger); border-left: 2px solid var(--danger); }
+tr.strong_sell td:nth-child(2) { color: #ff1744; border-left: 3px solid #ff1744; }
 
 /* Recommendation cells in Portfolio & Watchlist tables — reuse the same
    typographic treatment as the Recommendations section's decision column. */
@@ -136,9 +135,11 @@ tr.sell td:nth-child(2) {
     letter-spacing: 0.5px;
     font-weight: 600;
 }
+.rec-strong_buy { color: #00e676; font-weight: 800; }
 .rec-buy  { color: var(--success); }
-.rec-sell { color: var(--danger); }
 .rec-hold { color: var(--text-muted); }
+.rec-sell { color: var(--danger); }
+.rec-strong_sell { color: #ff1744; font-weight: 800; }
 .rec-none { color: var(--text-muted); font-weight: 400; }
 
 /* Trading loop status card */
@@ -287,6 +288,26 @@ tr.sell td:nth-child(2) {
     border-bottom: 1px solid var(--border);
     padding-bottom: 4px;
 }
+.btn-analyze {
+    margin-top: 10px;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    cursor: pointer;
+}
+.btn-analyze:hover { background: var(--accent); color: #fff; }
+.btn-analyze:disabled { opacity: 0.6; cursor: wait; }
+.spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .modal-rationale {
     margin-top: 10px;
     padding: 10px 12px;
@@ -300,3 +321,122 @@ tr.sell td:nth-child(2) {
 /* Clickable rows */
 tr[data-symbol] { cursor: pointer; }
 tr[data-symbol]:hover { background: rgba(74, 158, 255, 0.08); }
+
+.chart-container {
+    position: relative;
+    height: 350px;
+    margin-bottom: 4px;
+}
+.chart-container-half {
+    position: relative;
+    height: 175px;
+    margin-bottom: 24px;
+}
+
+/* Screener page */
+.screener-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+.screener-controls input[type="text"] {
+    flex: 1;
+    max-width: 360px;
+}
+.screener-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+.filter-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+    margin-right: 4px;
+}
+.filter-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.filter-checkbox input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.screener-status {
+    margin-top: 10px;
+}
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+th.sortable:hover { color: var(--accent); }
+th.sort-active { color: var(--accent); }
+.sort-arrow { font-size: 10px; }
+
+/* Documentation pages */
+.doc-link {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px; background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 6px; text-decoration: none; color: var(--text);
+    transition: border-color 0.15s;
+}
+.doc-link:hover { border-color: var(--accent); }
+.doc-rendered { line-height: 1.7; }
+.doc-rendered h1 { font-size: 1.6em; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 0; }
+.doc-rendered h2 { font-size: 1.3em; color: var(--text); margin-top: 28px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.doc-rendered h3 { font-size: 1.1em; color: var(--muted); margin-top: 20px; }
+.doc-rendered code { background: var(--bg); padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+.doc-rendered pre { background: var(--bg); padding: 14px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); }
+.doc-rendered pre code { background: none; padding: 0; }
+.doc-rendered table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.doc-rendered th, .doc-rendered td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; font-size: 13px; }
+.doc-rendered th { background: var(--bg); }
+.doc-rendered blockquote { border-left: 3px solid var(--accent); margin: 12px 0; padding: 8px 16px; color: var(--muted); }
+.doc-rendered a { color: var(--accent); }
+
+/* Stock detail page */
+.stock-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.stock-detail-header h2 { margin: 0; font-size: 22px; }
+.stock-symbol-badge {
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+}
+.stock-exchange-badge {
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+.stock-detail-rec { margin: 8px 0; }
+.stock-detail-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}

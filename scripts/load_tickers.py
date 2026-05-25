@@ -52,7 +52,7 @@ def load_tickers():
     init_db()
 
     logger.info("LoadTickers: fetching tickers from Massive API...")
-    tickers_iter = massive_client.fetch_all_tickers()
+    tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
 
     batch = []
     total = 0
@@ -61,7 +61,7 @@ def load_tickers():
         if len(batch) >= BATCH_SIZE:
             count = upsert_tickers(batch)
             total += count
-            logger.info(f"LoadTickers: upserted batch ({total} total so far)")
+            logger.info(f"LoadTickers: upserted batch ({total} total so far)...")
             batch = []
 
     # Flush remaining

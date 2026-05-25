@@ -17,6 +17,7 @@ access to the Robinhood account.
 """
 
 import asyncio
+import threading
 import time
 
 from config import *  # noqa: F401,F403
@@ -27,6 +28,7 @@ except NameError:
     WEBUI_PORT = 5001
 
 from src.api import robinhood
+from src.api import massive_client
 from src import db
 from src.state import trading_state
 from src.trading import loop as trading_loop
@@ -34,6 +36,69 @@ from src.utils import logger
 
 # Import the Flask app and its routes from webui.py
 from webui import app
+
+
+def _ensure_signals_for_all_stocks():
+    """Load history and compute signals for portfolio/watchlist stocks missing from stock_stats.
+
+    Runs in a background thread so it doesn't block app startup.
+    """
+    try:
+        # Get all portfolio symbols
+        holdings = robinhood.get_portfolio_stocks() or {}
+        portfolio_symbols = list(holdings.keys())
+
+        # Get all watchlist symbols
+        watchlist_symbols = []
+        try:
+            all_lists = robinhood.get_all_watchlists()
+            names = [w.get('display_name') for w in all_lists if isinstance(w, dict) and w.get('display_name')]
+            for name in names:
+                try:
+                    stocks = robinhood.get_watchlist_stocks(name)
+                    for s in stocks:
+                        sym = s.get('symbol') if isinstance(s, dict) else None
+                        if sym and sym not in watchlist_symbols:
+                            watchlist_symbols.append(sym)
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.error(f"App: error fetching watchlists for signal init: {e}")
+
+        all_symbols = list(set(portfolio_symbols + watchlist_symbols))
+        existing_stats = db.get_all_stock_stats()
+        missing = [s for s in all_symbols if s not in existing_stats]
+
+        if not missing:
+            logger.info(f"App: all {len(all_symbols)} stocks have signals computed")
+            return
+
+        logger.info(f"App: {len(missing)} stocks need history/signals: {', '.join(missing[:10])}{'...' if len(missing) > 10 else ''}")
+
+        # Process all stocks — reload history if less than 2 years (< 400 bars)
+        for i, symbol in enumerate(all_symbols, 1):
+            try:
+                status = db.get_stock_history_status(symbol)
+                needs_load = not status['has_data'] or status['bar_count'] < 400
+
+                if needs_load:
+                    logger.info(f"App: loading 2-year history for {symbol} ({i}/{len(all_symbols)}, have {status['bar_count']} bars)...")
+                    bars = massive_client.fetch_daily_bars(symbol, days=730)
+                    if bars:
+                        db.upsert_stock_history(symbol, bars)
+                        db.compute_indicators(symbol)
+                    else:
+                        logger.error(f"App: no data returned for {symbol}")
+                elif symbol in missing:
+                    logger.info(f"App: computing signals for {symbol} ({i}/{len(all_symbols)})...")
+                    db.compute_indicators(symbol)
+            except Exception as e:
+                logger.error(f"App: error processing {symbol}: {e}")
+                continue
+
+        logger.info(f"App: signal initialization complete for {len(all_symbols)} stocks")
+    except Exception as e:
+        logger.error(f"App: error in signal initialization: {e}")
 
 
 def main():
@@ -54,6 +119,14 @@ def main():
         token_expiry=time.time() + login_resp['expires_in'],
     )
     logger.info(f"App: Robinhood login successful. Token expires in {login_resp['expires_in']}s")
+
+    # --- Load history + compute signals for all stocks (background) ---
+    signal_thread = threading.Thread(
+        target=_ensure_signals_for_all_stocks,
+        name="signal-init",
+        daemon=True,
+    )
+    signal_thread.start()
 
     # --- Start trading loop in background ---
     trading_loop.start()

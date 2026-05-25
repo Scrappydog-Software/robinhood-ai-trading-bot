@@ -38,11 +38,9 @@ try:
 except NameError:
     AFTER_HOURS_INTERVAL_SECONDS = 3600
 
-# Path to the JSON file written by main.py each cycle. Resolved relative to
-# webui's CWD (same convention main.py uses when writing).
-LAST_DECISIONS_PATH = os.path.join('data', 'last-decisions.json')
 
 from src.api import robinhood
+from src.api import claude
 from src.api import massive_client
 from src import db
 from src.state import trading_state
@@ -50,84 +48,16 @@ from src.trading import loop as trading_loop
 from src.utils import logger
 
 
-def _load_decisions_map():
-    """Return a dict mapping symbol -> decision from the most recent cycle.
+def _build_decisions_map_from_stats(all_stats):
+    """Build a symbol -> decision mapping from stock_stats.
 
-    Reads from in-process shared state first (populated by the unified app's
-    trading loop). Falls back to data/last-decisions.json if shared state is
-    empty (backward compatibility when running webui.py standalone alongside
-    a separate main.py process).
-
-    Returns an empty dict if no data is available so callers can safely do
-    ``decisions_map.get(symbol)`` without error handling.
+    Single source of truth for recommendations across the entire UI.
     """
-    # Try in-process shared state first
-    state_decisions = trading_state.decisions
-    if state_decisions:
-        mapping = {}
-        for d in state_decisions:
-            if not isinstance(d, dict):
-                continue
-            symbol = d.get('symbol')
-            decision = d.get('decision')
-            if symbol and decision:
-                mapping[symbol] = decision
-        return mapping
-
-    # Fall back to JSON file
-    if not os.path.exists(LAST_DECISIONS_PATH):
-        return {}
-    try:
-        with open(LAST_DECISIONS_PATH, 'r') as f:
-            payload = json.load(f)
-    except Exception as e:
-        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions map: {e}")
-        return {}
-
-    decisions = payload.get('decisions') or []
-    mapping = {}
-    for d in decisions:
-        if not isinstance(d, dict):
-            continue
-        symbol = d.get('symbol')
-        decision = d.get('decision')
-        if symbol and decision:
-            mapping[symbol] = decision
-    return mapping
-
-
-def _load_decisions_detail_map():
-    """Return a dict mapping symbol -> {decision, rationale, quantity}.
-
-    Like _load_decisions_map but includes all decision fields for the
-    stock detail popup.
-    """
-    state_decisions = trading_state.decisions
-    source = state_decisions if state_decisions else None
-
-    if not source:
-        if not os.path.exists(LAST_DECISIONS_PATH):
-            return {}
-        try:
-            with open(LAST_DECISIONS_PATH, 'r') as f:
-                payload = json.load(f)
-            source = payload.get('decisions') or []
-        except Exception as e:
-            logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH} for decisions detail map: {e}")
-            return {}
-
-    mapping = {}
-    for d in source:
-        if not isinstance(d, dict):
-            continue
-        symbol = d.get('symbol')
-        if symbol:
-            mapping[symbol] = {
-                'decision': d.get('decision'),
-                'quantity': d.get('quantity', 0),
-                'rationale': d.get('rationale', ''),
-            }
-    return mapping
+    return {
+        symbol: stats.get('latest_signal')
+        for symbol, stats in all_stats.items()
+        if stats.get('latest_signal')
+    }
 
 
 app = Flask(__name__)
@@ -140,8 +70,7 @@ csrf = CSRFProtect(app)
 
 
 def _build_watchlists_view():
-    """Fetch ALL of the user's watchlists from Robinhood — not just the
-    ones in WATCHLIST_NAMES (which is the trading-bot's analysis subset).
+    """Fetch ALL of the user's watchlists from Robinhood.
 
     The dashboard is a UI for managing watchlists, so it should reflect
     Robinhood's actual state — including any list the user just created
@@ -176,7 +105,7 @@ def _build_portfolio_view():
         logger.error(f"Error loading portfolio stocks: {e}")
         return [], str(e), 0.0
 
-    decisions_map = _load_decisions_map()
+    all_stats = db.get_all_stock_stats()
     rows = []
     total_value = 0.0
     for symbol, data in (holdings or {}).items():
@@ -186,13 +115,14 @@ def _build_portfolio_view():
             avg = float(data.get('average_buy_price', 0) or 0)
             position_value = price * qty
             total_value += position_value
+            stats = all_stats.get(symbol)
             rows.append({
                 'symbol': symbol,
                 'quantity': round(qty, 6),
                 'current_price': round(price, 2),
                 'avg_buy_price': round(avg, 2),
                 'position_value': round(position_value, 2),
-                'recommendation': decisions_map.get(symbol),
+                'recommendation': stats.get('latest_signal') if stats else None,
             })
         except Exception as e:
             logger.error(f"Error parsing holding {symbol}: {e}")
@@ -211,151 +141,47 @@ def _build_account_view():
         return {'buying_power': None, 'error': str(e)}
 
 
-def _build_recommendations_from_decisions(decisions, timestamp, market_open_at_cycle):
-    """Common logic to shape a decisions list into the template view dict.
+def _build_recommendations_view(all_stats, portfolio_symbols=None):
+    """Build actionable recommendations from stock_stats.
 
-    Used by both the in-process state path and the JSON file fallback.
+    Shows buy/strong_buy recommendations and sell/strong_sell for stocks
+    currently in the portfolio. Holds are excluded.
     """
-    empty = {
-        'available': False,
-        'timestamp': None,
-        'age_seconds': None,
-        'stale': False,
-        'market_open_at_cycle': None,
-        'rows': [],
-        'hold_count': 0,
-        'error': None,
-    }
-
-    if decisions is None:
-        return empty
-
-    # Compute age from timestamp
-    age_seconds = None
-    if isinstance(timestamp, str):
-        try:
-            ts_norm = timestamp.replace('Z', '+00:00')
-            file_dt = datetime.fromisoformat(ts_norm)
-            age_seconds = int((datetime.now(timezone.utc) - file_dt).total_seconds())
-        except Exception as e:
-            logger.error(f"WebUI: error parsing timestamp '{timestamp}': {e}")
-
-    # Stale if older than the cadence the bot would have used.
-    stale = False
-    if age_seconds is not None:
-        threshold = RUN_INTERVAL_SECONDS if market_open_at_cycle else AFTER_HOURS_INTERVAL_SECONDS
-        stale = age_seconds > threshold
-
-    # Filter holds, count them for the "N holds filtered out" hint.
-    hold_count = 0
+    held = set(portfolio_symbols or [])
     rows = []
-    for d in decisions:
-        if not isinstance(d, dict):
+    for symbol, stats in all_stats.items():
+        decision = stats.get('latest_signal')
+        if not decision or decision == 'hold':
             continue
-        decision = d.get('decision')
-        if decision == 'hold':
-            hold_count += 1
+        if decision in ('sell', 'strong_sell') and symbol not in held:
             continue
-        if decision not in ('buy', 'sell'):
+        if decision not in ('strong_buy', 'buy', 'sell', 'strong_sell'):
             continue
-        try:
-            quantity = float(d.get('quantity', 0) or 0)
-        except (TypeError, ValueError):
-            quantity = 0.0
         rows.append({
-            'symbol': d.get('symbol'),
+            'symbol': symbol,
             'decision': decision,
-            'quantity': quantity,
+            'quantity': 0,
         })
 
-    # Predictable order: buys first, then sells, then alphabetic by symbol.
-    rows.sort(key=lambda r: (0 if r['decision'] == 'buy' else 1, r['symbol'] or ''))
+    order = {'strong_buy': 0, 'buy': 1, 'sell': 2, 'strong_sell': 3}
+    rows.sort(key=lambda r: (order.get(r['decision'], 4), r['symbol'] or ''))
 
     return {
-        'available': True,
-        'timestamp': timestamp,
-        'age_seconds': age_seconds,
-        'stale': stale,
-        'market_open_at_cycle': bool(market_open_at_cycle) if market_open_at_cycle is not None else None,
+        'available': len(all_stats) > 0,
         'rows': rows,
-        'hold_count': hold_count,
         'error': None,
     }
-
-
-def _build_recommendations_view():
-    """Load the most recent cycle's filtered AI decisions and shape them
-    for the template.
-
-    Reads from in-process shared state first (populated by the unified app's
-    trading loop). Falls back to data/last-decisions.json if shared state has
-    no decisions (backward compatibility when running webui.py standalone
-    alongside a separate main.py process).
-
-    Contract:
-      - no data            -> available=False, error=None (template says
-                              "no recent recommendations")
-      - malformed JSON     -> available=False, error=<msg>
-      - parsed OK          -> available=True, rows filtered to buy/sell only,
-                              sorted by (decision: buy<sell, then symbol asc).
-                              stale flag computed against RUN_INTERVAL or
-                              AFTER_HOURS_INTERVAL depending on whether the
-                              market was open at write time.
-      - hold-count         -> exposed separately so the template can render
-                              "N hold decisions filtered out" when the visible
-                              rows list is empty but the cycle did run.
-
-    Holds are filtered out HERE rather than at write time so other consumers
-    of data/last-decisions.json (debugging, future analytics) can still see
-    the model's full output.
-    """
-    empty = {
-        'available': False,
-        'timestamp': None,
-        'age_seconds': None,
-        'stale': False,
-        'market_open_at_cycle': None,
-        'rows': [],
-        'hold_count': 0,
-        'error': None,
-    }
-
-    # Try in-process shared state first
-    state = trading_state.snapshot()
-    if state['decisions']:
-        return _build_recommendations_from_decisions(
-            state['decisions'],
-            state['last_cycle_time'],
-            state['market_open'],
-        )
-
-    # Fall back to JSON file
-    if not os.path.exists(LAST_DECISIONS_PATH):
-        return empty
-
-    try:
-        with open(LAST_DECISIONS_PATH, 'r') as f:
-            payload = json.load(f)
-    except Exception as e:
-        logger.error(f"WebUI: error reading {LAST_DECISIONS_PATH}: {e}")
-        result = dict(empty)
-        result['error'] = str(e)
-        return result
-
-    return _build_recommendations_from_decisions(
-        payload.get('decisions') or [],
-        payload.get('timestamp'),
-        payload.get('market_open'),
-    )
 
 
 @app.route('/')
 def index():
     account = _build_account_view()
     portfolio_rows, portfolio_error, portfolio_total = _build_portfolio_view()
+    portfolio_symbols = [r['symbol'] for r in portfolio_rows]
     watchlists = _build_watchlists_view()
-    recommendations = _build_recommendations_view()
-    decisions_map = _load_decisions_map()
+    stock_stats = db.get_all_stock_stats()
+    recommendations = _build_recommendations_view(stock_stats, portfolio_symbols=portfolio_symbols)
+    decisions_map = _build_decisions_map_from_stats(stock_stats)
     loop_status = trading_state.snapshot()
     return render_template(
         'index.html',
@@ -367,6 +193,7 @@ def index():
         recommendations=recommendations,
         decisions_map=decisions_map,
         loop_status=loop_status,
+        stock_stats=stock_stats,
     )
 
 
@@ -453,15 +280,16 @@ def api_stock_detail(symbol):
     symbol = symbol.upper()
     result = {'symbol': symbol}
 
-    # --- Robinhood data (portfolio position) ---
+    # --- Position data from Robinhood + price from Massive API ---
     rh_data = None
     try:
         holdings = robinhood.get_portfolio_stocks()
         if holdings and symbol in holdings:
             stock = holdings[symbol]
-            price = float(stock.get('price', 0) or 0)
             qty = float(stock.get('quantity', 0) or 0)
             avg = float(stock.get('average_buy_price', 0) or 0)
+            # Get current price from Massive API
+            price = massive_client.fetch_current_price(symbol) or float(stock.get('price', 0) or 0)
             rh_data = {
                 'current_price': round(price, 2),
                 'quantity': round(qty, 6),
@@ -469,33 +297,237 @@ def api_stock_detail(symbol):
                 'position_value': round(price * qty, 2),
             }
         else:
-            # Not in portfolio — try to get current price via quote
-            try:
-                quote = robinhood.rh_run_with_retries(
-                    robinhood.rh.stocks.get_latest_price, symbol, max_retries=1
-                )
-                if quote and isinstance(quote, list) and quote[0]:
-                    rh_data = {
-                        'current_price': round(float(quote[0]), 2),
-                        'quantity': 0,
-                        'avg_buy_price': 0,
-                        'position_value': 0,
-                    }
-            except Exception:
-                pass
+            # Not in portfolio — get current price from Massive API
+            price = massive_client.fetch_current_price(symbol)
+            if price:
+                rh_data = {
+                    'current_price': round(price, 2),
+                    'quantity': 0,
+                    'avg_buy_price': 0,
+                    'position_value': 0,
+                }
     except Exception as e:
-        logger.error(f"WebUI: api_stock_detail error fetching Robinhood data for {symbol}: {e}")
+        logger.error(f"WebUI: api_stock_detail error fetching data for {symbol}: {e}")
     result['robinhood'] = rh_data
-
-    # --- AI decision + rationale ---
-    detail_map = _load_decisions_detail_map()
-    result['ai_decision'] = detail_map.get(symbol)
 
     # --- Ticker details from SQLite ---
     ticker_row = db.get_ticker_by_symbol(symbol)
     result['ticker'] = ticker_row
 
+    # --- Historical data status ---
+    result['history_status'] = db.get_stock_history_status(symbol)
+
+    # --- Backtest stats (auto-compute if history exists but stats don't) ---
+    stats = db.get_stock_stats(symbol)
+    if not stats and result['history_status'] and result['history_status']['has_data']:
+        logger.info(f"WebUI: auto-computing signals/stats for {symbol} (history exists, no stats)")
+        db.compute_indicators(symbol)
+        stats = db.get_stock_stats(symbol)
+    result['stats'] = stats
+
+    # --- Current recommendation (from rule-based signals) ---
+    # Show the latest signal from stock_stats. Rationale is only populated
+    # when user explicitly clicks "Request Analysis" (LLM call).
+    if stats and stats.get('latest_signal'):
+        result['ai_decision'] = {
+            'decision': stats['latest_signal'],
+            'quantity': 0,
+            'rationale': None,
+        }
+    else:
+        result['ai_decision'] = None
+
     return jsonify(result)
+
+
+@app.route('/api/stock/<symbol>/analyze', methods=['POST'])
+@csrf.exempt
+def api_stock_analyze(symbol):
+    """On-demand single-stock AI analysis using pre-computed DB data.
+
+    Reads all indicators from stock_history (already computed), sends to
+    Claude Sonnet for a decision with rationale. No live API calls needed.
+    """
+    symbol = symbol.upper()
+    logger.info(f"WebUI: on-demand analysis requested for {symbol}")
+    try:
+        # Get latest bar with all indicators from SQLite (instant)
+        bars = db.get_stock_history_bars(symbol)
+        stats = db.get_stock_stats(symbol)
+        ticker = db.get_ticker_by_symbol(symbol)
+
+        if not bars:
+            return jsonify({'ok': False, 'error': f'No history data for {symbol}. Load history first.'}), 404
+
+        last_bar = bars[-1]
+        stock_data = {
+            'symbol': symbol,
+            'name': ticker.get('name') if ticker else symbol,
+            'current_price': last_bar.get('close'),
+            'bar_date': last_bar.get('bar_date'),
+            'open': last_bar.get('open'),
+            'high': last_bar.get('high'),
+            'low': last_bar.get('low'),
+            'close': last_bar.get('close'),
+            'volume': last_bar.get('volume'),
+            'sma_10': last_bar.get('sma_10'),
+            'sma_20': last_bar.get('sma_20'),
+            'sma_50': last_bar.get('sma_50'),
+            'sma_200': last_bar.get('sma_200'),
+            'ema_12': last_bar.get('ema_12'),
+            'ema_26': last_bar.get('ema_26'),
+            'rsi_14': last_bar.get('rsi_14'),
+            'macd_line': last_bar.get('macd_line'),
+            'macd_signal': last_bar.get('macd_signal'),
+            'macd_histogram': last_bar.get('macd_histogram'),
+            'bb_upper': last_bar.get('bb_upper'),
+            'bb_lower': last_bar.get('bb_lower'),
+            'bb_width': last_bar.get('bb_width'),
+            'vol_ratio': last_bar.get('vol_ratio'),
+            'obv': last_bar.get('obv'),
+            'market_cap': ticker.get('market_cap') if ticker else None,
+            'signal_score': last_bar.get('signal_score'),
+            'signal_synthesis': last_bar.get('signal_synthesis'),
+        }
+
+        # Add extension % for context
+        if stock_data.get('sma_200') and stock_data['sma_200'] > 0 and stock_data.get('close'):
+            stock_data['extension_above_sma200_pct'] = round(
+                (stock_data['close'] - stock_data['sma_200']) / stock_data['sma_200'] * 100, 1
+            )
+
+        # Add backtest context
+        if stats:
+            stock_data['backtest_1yr_return'] = stats.get('bt_1yr_return_pct')
+            stock_data['backtest_2yr_return'] = stats.get('backtest_return_pct')
+
+        # Add recent price context (last 5 bars)
+        if len(bars) >= 5:
+            stock_data['recent_5_day_prices'] = [
+                {'date': b['bar_date'], 'close': b['close']} for b in bars[-5:]
+            ]
+
+        # Remove None values for cleaner prompt
+        stock_data = {k: v for k, v in stock_data.items() if v is not None}
+
+        prompt = (
+            f"You are a momentum-focused technical analyst. Analyze this stock using the data below.\n\n"
+            f"**Trading Rules (backtested, follow strictly):**\n"
+            f"1. MA Alignment: SMA(10) > SMA(50) > SMA(200) = strong bullish trend. This is the PRIMARY signal.\n"
+            f"2. MACD: Positive histogram + line above signal = bullish momentum confirmation.\n"
+            f"3. Volume: High vol_ratio (>1.5) CONFIRMS breakouts — do NOT penalize high volume moves.\n"
+            f"4. RSI: Only penalize if RSI > 75 (extreme). RSI 60-70 in an uptrend is NORMAL, not a warning.\n"
+            f"5. Bollinger Band breakouts with high volume are BULLISH (confirmed breakout), NOT overbought.\n"
+            f"6. Overextension: Only flag if >30% above SMA(200). If SMA(200) is not available, IGNORE overextension.\n"
+            f"7. Conviction scoring: 5+ aligned bullish signals = strong_buy. 2-4 = buy. Mixed = hold.\n\n"
+            f"**IMPORTANT:** Our backtesting shows that penalizing momentum (Bollinger breakouts, high volume moves,\n"
+            f"stocks above MAs) REDUCES returns. Trend-following outperforms mean-reversion. Do NOT downgrade\n"
+            f"a stock that has strong MA alignment + positive MACD + high volume just because it moved fast.\n"
+            f"The signal_score field shows the Python engine's assessment — respect it unless you see a clear\n"
+            f"technical breakdown (RSI > 75 + negative MACD + declining volume).\n\n"
+            f"**Stock Data (all indicators pre-computed):**\n```json\n{json.dumps(stock_data, indent=1)}\n```\n\n"
+            f"**Response Format:**\n"
+            f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<strong_buy|buy|hold|sell|strong_sell>", '
+            f'"quantity": 0, "rationale": "<detailed explanation referencing the specific indicator values above>"}}\n\n'
+            f"Be specific — reference actual numbers. Provide only JSON."
+        )
+
+        ai_response = claude.make_ai_request(prompt)
+        logger.info(f"WebUI: Claude response received for {symbol}, parsing...")
+        result = claude.parse_ai_response(ai_response)
+
+        if isinstance(result, list) and len(result) > 0:
+            result = result[0]
+        elif not isinstance(result, dict):
+            result = {'symbol': symbol, 'decision': 'hold', 'quantity': 0, 'rationale': str(result)}
+
+        # Store in stock_analysis with source='on_demand'
+        analyzed_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        try:
+            db.insert_stock_analysis({
+                'symbol': symbol,
+                'analyzed_at': analyzed_at,
+                'decision': result.get('decision', ''),
+                'quantity': result.get('quantity'),
+                'rationale': result.get('rationale'),
+                'price': stock_data.get('close'),
+                'rsi': stock_data.get('rsi_14'),
+                'vwap': None,
+                'ma_50': stock_data.get('sma_50'),
+                'ma_200': stock_data.get('sma_200'),
+                'analyst_summary': None,
+                'held_quantity': 0,
+                'held_avg_price': 0,
+                'source': 'on_demand',
+            })
+        except Exception as e:
+            logger.error(f"WebUI: error storing on-demand analysis for {symbol}: {e}")
+
+        logger.info(f"WebUI: analysis complete for {symbol}: {result.get('decision', '?')}")
+        return jsonify({'ok': True, 'analysis': result})
+    except Exception as e:
+        logger.error(f"WebUI: on-demand analysis error for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/load-history', methods=['POST'])
+@csrf.exempt
+def api_stock_load_history(symbol):
+    """Fetch 2 years of daily OHLCV aggregates from Massive API and store them."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: loading 2-year history for {symbol}")
+
+    try:
+        bars = massive_client.fetch_daily_bars(symbol, days=730)
+        if not bars:
+            return jsonify({'ok': False, 'error': f'No data returned for {symbol}'}), 404
+
+        bars_loaded = db.upsert_stock_history(symbol, bars)
+        logger.info(f"WebUI: loaded {bars_loaded} bars for {symbol}")
+
+        indicators_computed = db.compute_indicators(symbol)
+        logger.info(f"WebUI: computed indicators for {symbol} ({indicators_computed} bars)")
+
+        from_date = bars[0]['bar_date'] if bars else '?'
+        to_date = bars[-1]['bar_date'] if bars else '?'
+        return jsonify({
+            'ok': True,
+            'bars_loaded': bars_loaded,
+            'indicators_computed': indicators_computed,
+            'from_date': from_date,
+            'to_date': to_date,
+        })
+    except Exception as e:
+        logger.error(f"WebUI: error loading history for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/compute-indicators', methods=['POST'])
+@csrf.exempt
+def api_compute_indicators(symbol):
+    """Compute technical indicators for a stock's existing history."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: computing indicators for {symbol}")
+    try:
+        count = db.compute_indicators(symbol)
+        return jsonify({'ok': True, 'bars_computed': count})
+    except Exception as e:
+        logger.error(f"WebUI: error computing indicators for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/stock/<symbol>/compute-signals', methods=['POST'])
+@csrf.exempt
+def api_compute_signals(symbol):
+    """Run rule-based signal scoring on a stock's history (no LLM needed)."""
+    symbol = symbol.upper()
+    logger.info(f"WebUI: computing signals for {symbol}")
+    try:
+        count = db.compute_signals(symbol)
+        return jsonify({'ok': True, 'bars_scored': count})
+    except Exception as e:
+        logger.error(f"WebUI: error computing signals for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/loop/start', methods=['POST'])
@@ -523,6 +555,228 @@ def api_loop_stop():
 
 
 # ---- Stock Research page ----
+
+@app.route('/api/stock/<symbol>/backtest-analyze', methods=['POST'])
+@csrf.exempt
+def api_backtest_analyze(symbol):
+    """Batch-analyze ALL historical bars using Claude Haiku.
+
+    Sends bars in batches of 20 to Claude Haiku for buy/sell/hold
+    decisions. Overwrites all existing recommendations so results
+    are fully from Haiku.
+    """
+    symbol = symbol.upper()
+    BATCH_SIZE = 20
+
+    logger.info(f"WebUI: Haiku recompute requested for {symbol}")
+
+    try:
+        unanalyzed = db.get_all_bars_for_analysis(symbol)
+        if not unanalyzed:
+            return jsonify({'ok': True, 'analyzed': 0, 'message': 'No bars to analyze'})
+
+        logger.info(f"WebUI: {len(unanalyzed)} unanalyzed bars for {symbol}")
+
+        from anthropic import Anthropic
+        haiku_client = Anthropic(api_key=claude.client.api_key)
+
+        total_analyzed = 0
+        for i in range(0, len(unanalyzed), BATCH_SIZE):
+            batch = unanalyzed[i:i + BATCH_SIZE]
+
+            bars_data = []
+            for bar in batch:
+                entry = {
+                    'date': bar['bar_date'],
+                    'open': bar['open'],
+                    'high': bar['high'],
+                    'low': bar['low'],
+                    'close': bar['close'],
+                    'volume': bar['volume'],
+                }
+                if bar.get('sma_50') is not None:
+                    entry['sma_50'] = round(bar['sma_50'], 2)
+                if bar.get('sma_200') is not None:
+                    entry['sma_200'] = round(bar['sma_200'], 2)
+                if bar.get('rsi_14') is not None:
+                    entry['rsi_14'] = round(bar['rsi_14'], 1)
+                if bar.get('macd_histogram') is not None:
+                    entry['macd_histogram'] = round(bar['macd_histogram'], 3)
+                if bar.get('bb_upper') is not None:
+                    entry['bb_upper'] = round(bar['bb_upper'], 2)
+                if bar.get('bb_lower') is not None:
+                    entry['bb_lower'] = round(bar['bb_lower'], 2)
+                if bar.get('vol_ratio') is not None:
+                    entry['vol_ratio'] = round(bar['vol_ratio'], 2)
+                bars_data.append(entry)
+
+            prompt = (
+                f"You are a systematic technical analyst evaluating {symbol}.\n\n"
+                f"**Analysis Framework (apply these rules):**\n"
+                f"1. MA Crossover: SMA(50) vs SMA(200) alignment. Triple alignment (price>50>200) = bullish trend. Price below SMA(200) = no longs.\n"
+                f"2. RSI: Below 30 crossing up = buy. Above 70 crossing down = sell.\n"
+                f"3. MACD: Histogram positive and growing = bullish momentum. Negative and falling = bearish. Crossovers confirm direction.\n"
+                f"4. RSI+MACD Combined: Both must agree for strong signals. Conflicting = hold.\n"
+                f"5. Bollinger Bands: Close above upper band with low volume = caution. Close below lower band = potential bounce.\n"
+                f"6. Volume: Vol_ratio > 1.5 confirms breakouts. Below 0.8 = suspect move.\n"
+                f"7. Overextension: If close is >30% above SMA(200), do NOT issue strong_buy — cap at buy. Sell signals still apply normally.\n"
+                f"8. Conviction: strong_buy requires 5+ bullish signals aligned. buy requires 3-4. hold = mixed. sell requires 3-4 bearish. strong_sell requires 5+ bearish.\n\n"
+                f"**Data (with pre-computed indicators):**\n```json\n{json.dumps(bars_data, indent=1)}\n```\n\n"
+                f"**Response Format:**\nReturn a JSON array with one entry per day:\n"
+                f'[{{"date": "YYYY-MM-DD", "recommendation": "strong_buy|buy|hold|sell|strong_sell"}}]\n\n'
+                f"Provide only the JSON output with no additional text."
+            )
+
+            resp = haiku_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            ai_text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+            decisions = claude.parse_ai_response(ai_text)
+
+            updates = []
+            for d in decisions:
+                if isinstance(d, dict) and d.get('date') and d.get('recommendation'):
+                    updates.append({
+                        'bar_date': d['date'],
+                        'recommendation': d['recommendation'],
+                    })
+
+            if updates:
+                db.update_bar_recommendations(symbol, updates)
+                total_analyzed += len(updates)
+
+            logger.info(f"WebUI: backtest batch {i//BATCH_SIZE + 1} done, {total_analyzed} analyzed so far")
+
+        logger.info(f"WebUI: backtest complete for {symbol}: {total_analyzed} bars analyzed")
+        return jsonify({'ok': True, 'analyzed': total_analyzed})
+    except Exception as e:
+        logger.error(f"WebUI: backtest analysis error for {symbol}: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/stock/<symbol>')
+def stock_detail_page(symbol):
+    """Full-page stock detail — reads ONLY from SQLite for instant load."""
+    symbol = symbol.upper()
+    ticker = db.get_ticker_by_symbol(symbol)
+    stats = db.get_stock_stats(symbol)
+    history_status = db.get_stock_history_status(symbol)
+    return render_template(
+        'stock_detail.html',
+        symbol=symbol,
+        ticker=ticker,
+        stats=stats,
+        history_status=history_status,
+    )
+
+
+@app.route('/history/<symbol>')
+def stock_history_page(symbol):
+    """Full-page stock price history with chart and data table."""
+    symbol = symbol.upper()
+    bars = db.get_stock_history_bars(symbol)
+    status = db.get_stock_history_status(symbol)
+    ticker = db.get_ticker_by_symbol(symbol)
+    analyzed_count = sum(1 for b in bars if b.get('recommendation'))
+    unanalyzed_count = len(bars) - analyzed_count
+    has_indicators = any(b.get('sma_10') is not None for b in bars)
+    has_signals = any(b.get('signal_score') is not None for b in bars)
+
+    # Backtest simulation: walk oldest→newest
+    # Use signal_synthesis exclusively when signals have been computed
+    INITIAL_CAPITAL = 100.0
+    capital = INITIAL_CAPITAL
+    shares_held = 0.0
+    state = 'waiting_to_buy'  # waiting_to_buy | holding
+    buy_markers = []   # [{x: index, y: price}]
+    sell_markers = []  # [{x: index, y: price}]
+
+    for i, bar in enumerate(bars):
+        bar['bt_shares_bought'] = None
+        bar['bt_shares_sold'] = None
+        bar['bt_sale_amount'] = None
+        bar['bt_running_total'] = None
+        rec = (bar.get('recommendation') or '').lower()
+
+        if state == 'waiting_to_buy' and rec in ('buy', 'strong_buy'):
+            close_price = bar.get('close') or 0
+            if close_price > 0 and capital > 0:
+                shares_held = capital / close_price
+                bar['bt_shares_bought'] = round(shares_held, 6)
+                bar['bt_running_total'] = round(capital, 2)
+                buy_markers.append({'x': i, 'y': close_price, 'date': bar['bar_date']})
+                state = 'holding'
+            else:
+                bar['bt_running_total'] = round(capital, 2)
+        elif state == 'holding' and rec in ('sell', 'strong_sell'):
+            open_price = bar.get('open') or 0
+            sale_amount = shares_held * open_price
+            bar['bt_shares_sold'] = round(shares_held, 6)
+            bar['bt_sale_amount'] = round(sale_amount, 2)
+            capital = sale_amount
+            bar['bt_running_total'] = round(capital, 2)
+            sell_markers.append({'x': i, 'y': open_price, 'date': bar['bar_date']})
+            shares_held = 0.0
+            state = 'waiting_to_buy'
+        else:
+            if state == 'holding' and shares_held > 0:
+                bar['bt_running_total'] = round(shares_held * (bar.get('close') or 0), 2)
+            else:
+                bar['bt_running_total'] = round(capital, 2)
+
+    bt_final = capital if state == 'waiting_to_buy' else round(shares_held * (bars[-1].get('close') or 0), 2) if bars else INITIAL_CAPITAL
+    bt_return_pct = round((bt_final - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100, 1) if INITIAL_CAPITAL > 0 else 0
+    bt_trades = len(sell_markers)
+
+    return render_template(
+        'history.html',
+        symbol=symbol,
+        ticker_name=ticker.get('name') if ticker else symbol,
+        bars=bars,
+        bars_json=json.dumps(bars),
+        status=status,
+        analyzed_count=analyzed_count,
+        unanalyzed_count=unanalyzed_count,
+        has_signals=has_signals,
+        buy_markers_json=json.dumps(buy_markers),
+        sell_markers_json=json.dumps(sell_markers),
+        bt_final=bt_final,
+        bt_return_pct=bt_return_pct,
+        bt_trades=bt_trades,
+        has_indicators=has_indicators,
+        initial_capital=INITIAL_CAPITAL,
+    )
+
+
+# ---- Documentation pages ----
+
+_DOCS = {
+    'overview': {'file': 'docs/project-overview.md', 'title': 'Project Overview'},
+    'schema': {'file': 'docs/database-schema.md', 'title': 'Database Schema'},
+    'algorithms': {'file': 'docs/algorithms.md', 'title': 'Algorithms'},
+    'framework': {'file': 'docs/technical-analysis-framework.md', 'title': 'Technical Analysis Framework'},
+}
+
+
+@app.route('/docs')
+def docs_index():
+    return render_template('docs.html', docs=_DOCS, slug=None, title=None, content=None)
+
+
+@app.route('/docs/<slug>')
+def docs_page(slug):
+    doc = _DOCS.get(slug)
+    if not doc:
+        return redirect(url_for('docs_index'))
+    try:
+        with open(doc['file'], 'r') as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = f"*File `{doc['file']}` not found.*"
+    return render_template('docs.html', docs=_DOCS, slug=slug, title=doc['title'], content=content)
+
 
 RESEARCH_PAGE_SIZE = 50
 
@@ -575,6 +829,13 @@ def research():
     )
 
 
+@app.route('/screener')
+def screener():
+    """Render the Stock Screener page — all analyzed stocks with search/sort."""
+    stocks = db.get_screener_stocks()
+    return render_template('screener.html', stocks=stocks)
+
+
 @app.route('/api/tickers/load', methods=['POST'])
 @csrf.exempt  # JSON API endpoint — CSRF token not applicable
 def api_tickers_load():
@@ -607,7 +868,7 @@ def api_tickers_load():
         }
 
     try:
-        tickers_iter = massive_client.fetch_all_tickers()
+        tickers_iter = massive_client.fetch_all_tickers(limit=BATCH_SIZE)
         batch = []
         total = 0
         for t in tickers_iter:
@@ -615,6 +876,7 @@ def api_tickers_load():
             if len(batch) >= BATCH_SIZE:
                 count = db.upsert_tickers(batch)
                 total += count
+                logger.info(f"WebUI: loaded {total} tickers so far...")
                 batch = []
         if batch:
             count = db.upsert_tickers(batch)

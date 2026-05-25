@@ -55,34 +55,23 @@
     {% if recommendations.error %}
         <p class="error">Error loading recommendations: {{ recommendations.error }}</p>
     {% elif not recommendations.available %}
-        <p class="muted">No recent recommendations. Start the trading loop above or run <code>python app.py</code> to populate this section.</p>
+        <p class="muted">No recommendations available. Load history and compute signals for your stocks.</p>
     {% else %}
-        <p class="muted small">
-            Last cycle: {{ recommendations.timestamp }}
-            ({% if recommendations.market_open_at_cycle %}market open{% else %}after hours{% endif %})
-            {% if recommendations.stale %}
-                <span class="stale-badge">stale</span>
-            {% else %}
-                <span class="fresh-badge">fresh</span>
-            {% endif %}
-        </p>
         {% if recommendations.rows|length == 0 %}
-            <p class="muted">No buy or sell signals this cycle. ({{ recommendations.hold_count }} hold decision{{ '' if recommendations.hold_count == 1 else 's' }} filtered out.)</p>
+            <p class="muted">All stocks are hold — no actionable recommendations.</p>
         {% else %}
             <table>
                 <thead>
                     <tr>
                         <th>Symbol</th>
-                        <th>Decision</th>
-                        <th>Quantity</th>
+                        <th>Recommendation</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for row in recommendations.rows %}
                         <tr class="{{ row.decision }}" data-symbol="{{ row.symbol }}">
                             <td><strong>{{ row.symbol }}</strong></td>
-                            <td>{{ row.decision }}</td>
-                            <td>{{ "%.6f"|format(row.quantity) }}</td>
+                            <td class="rec rec-{{ row.decision }}">{{ row.decision }}</td>
                         </tr>
                     {% endfor %}
                 </tbody>
@@ -107,10 +96,12 @@
                     <th>Avg Buy Price</th>
                     <th>Position Value</th>
                     <th>Recommendation</th>
+                    <th>Backtest</th>
                 </tr>
             </thead>
             <tbody>
                 {% for row in portfolio_rows %}
+                    {% set stats = stock_stats.get(row.symbol) %}
                     <tr data-symbol="{{ row.symbol }}">
                         <td><strong>{{ row.symbol }}</strong></td>
                         <td>{{ row.quantity }}</td>
@@ -118,6 +109,7 @@
                         <td>${{ row.avg_buy_price }}</td>
                         <td>${{ row.position_value }}</td>
                         <td class="rec rec-{{ (row.recommendation or 'none')|lower }}">{% if row.recommendation %}{{ row.recommendation }}{% else %}&mdash;{% endif %}</td>
+                        {% set bt_pct = stats.bt_1yr_return_pct if (stats and stats.bt_1yr_return_pct is not none) else (stats.backtest_return_pct if stats else none) %}<td class="{% if bt_pct is not none %}{% if bt_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if bt_pct is not none %}{{ "+" if bt_pct >= 0 }}{{ bt_pct }}%{% else %}&mdash;{% endif %}</td>
                     </tr>
                 {% endfor %}
             </tbody>
@@ -145,15 +137,18 @@
                         <tr>
                             <th>Symbol</th>
                             <th>Recommendation</th>
+                            <th>Backtest</th>
                             <th class="actions-col">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for symbol in wl.symbols %}
                             {% set rec = decisions_map.get(symbol) %}
+                            {% set stats = stock_stats.get(symbol) %}
                             <tr data-symbol="{{ symbol }}">
                                 <td><strong>{{ symbol }}</strong></td>
                                 <td class="rec rec-{{ (rec or 'none')|lower }}">{% if rec %}{{ rec }}{% else %}&mdash;{% endif %}</td>
+                                {% set bt_pct = stats.bt_1yr_return_pct if (stats and stats.bt_1yr_return_pct is not none) else (stats.backtest_return_pct if stats else none) %}<td class="{% if bt_pct is not none %}{% if bt_pct >= 0 %}rec-buy{% else %}rec-sell{% endif %}{% endif %}" style="font-weight:600;font-size:12px;">{% if bt_pct is not none %}{{ "+" if bt_pct >= 0 }}{{ bt_pct }}%{% else %}&mdash;{% endif %}</td>
                                 <td class="actions-col">
                                     <form method="post" action="{{ url_for('remove_from_watchlist', name=wl.name) }}" class="inline-form">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

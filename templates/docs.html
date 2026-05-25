@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<section class="card">
+    {% if slug %}
+        <div style="margin-bottom:12px;">
+            <a href="{{ url_for('docs_index') }}" class="btn btn-sm" style="background:var(--bg-elev);border:1px solid var(--border);color:var(--muted);">&larr; All Docs</a>
+        </div>
+        <div id="doc-content" class="doc-rendered"></div>
+    {% else %}
+        <h2>Documentation</h2>
+        <div style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
+            {% for key, doc in docs.items() %}
+                <a href="{{ url_for('docs_page', slug=key) }}" class="doc-link">
+                    <strong>{{ doc.title }}</strong>
+                    <span class="muted small">docs/{{ doc.file.split('/')[-1] }}</span>
+                </a>
+            {% endfor %}
+        </div>
+    {% endif %}
+</section>
+
+{% if slug %}
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script>
+(function() {
+    var raw = {{ content|tojson }};
+    var el = document.getElementById('doc-content');
+    el.innerHTML = marked.parse(raw);
+})();
+</script>
+{% endif %}
+
+{% endblock %}
