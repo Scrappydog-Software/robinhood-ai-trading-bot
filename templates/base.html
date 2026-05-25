@@ -83,6 +83,16 @@
             return d.innerHTML;
         }
 
+        function formatMarketCap(val) {
+            if (val === null || val === undefined) return '&mdash;';
+            var num = Number(val);
+            if (isNaN(num) || num === 0) return '&mdash;';
+            if (num >= 1e12) return '$' + (num / 1e12).toFixed(1) + 'T';
+            if (num >= 1e9) return '$' + (num / 1e9).toFixed(1) + 'B';
+            if (num >= 1e6) return '$' + (num / 1e6).toFixed(1) + 'M';
+            return '$' + num.toLocaleString();
+        }
+
         function renderModal(data) {
             var html = '';
 
@@ -135,6 +145,7 @@
                 html += '<dt>Market</dt><dd>' + esc(data.ticker.market) + '</dd>';
                 html += '<dt>Type</dt><dd>' + esc(data.ticker.type) + '</dd>';
                 html += '<dt>Exchange</dt><dd>' + esc(data.ticker.primary_exchange) + '</dd>';
+                html += '<dt>Market Cap</dt><dd>' + formatMarketCap(data.ticker.market_cap) + '</dd>';
                 html += '<dt>Active</dt><dd>' + (data.ticker.active === 1 ? 'Yes' : data.ticker.active === 0 ? 'No' : '&mdash;') + '</dd>';
                 html += '<dt>Currency</dt><dd>' + esc(data.ticker.currency_name) + '</dd>';
                 if (data.ticker.cik) html += '<dt>CIK</dt><dd>' + esc(data.ticker.cik) + '</dd>';

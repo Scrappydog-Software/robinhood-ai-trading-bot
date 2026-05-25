@@ -37,9 +37,10 @@
                     <th class="sortable" data-col="1" data-type="string">Name <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="2" data-type="string">Recommendation <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="3" data-type="number">Score <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="4" data-type="number">1yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="5" data-type="number">2yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="6" data-type="number">Trades <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="4" data-type="number">Market Cap <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="5" data-type="number">1yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="6" data-type="number">2yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="7" data-type="number">Trades <span class="sort-arrow"></span></th>
                 </tr>
             </thead>
             <tbody>
@@ -57,6 +58,21 @@
                         {% endif %}
                     </td>
                     <td>{{ stock.latest_score if stock.latest_score is not none else '—' }}</td>
+                    <td data-raw="{{ stock.market_cap if stock.market_cap is not none else '' }}">
+                        {% if stock.market_cap is not none %}
+                            {% if stock.market_cap >= 1000000000000 %}
+                                ${{ '%.1f'|format(stock.market_cap / 1000000000000) }}T
+                            {% elif stock.market_cap >= 1000000000 %}
+                                ${{ '%.1f'|format(stock.market_cap / 1000000000) }}B
+                            {% elif stock.market_cap >= 1000000 %}
+                                ${{ '%.1f'|format(stock.market_cap / 1000000) }}M
+                            {% else %}
+                                ${{ '%,.0f'|format(stock.market_cap) }}
+                            {% endif %}
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>
                         {% if stock.bt_1yr_return_pct is not none %}
                             <span class="{{ 'rec-buy' if stock.bt_1yr_return_pct >= 0 else 'rec-sell' }}" style="font-weight:600;">
@@ -94,7 +110,7 @@
     var STORAGE_KEY = 'screener_state';
     var DEFAULT_STATE = {
         filters: ['strong_buy'],
-        sort: { col: 5, asc: false },
+        sort: { col: 6, asc: false },
         search: ''
     };
 
@@ -175,6 +191,13 @@
     function getSortValue(row, col, type) {
         var cell = row.children[col];
         if (!cell) return '';
+        // Use data-raw attribute for numeric columns that have it (e.g., market cap)
+        var raw = cell.getAttribute('data-raw');
+        if (raw !== null && type === 'number') {
+            if (raw === '') return -Infinity;
+            var n = parseFloat(raw);
+            return isNaN(n) ? -Infinity : n;
+        }
         var text = cell.textContent.trim().replace(/[+%]/g, '');
         if (text === '—' || text === '') return type === 'number' ? -Infinity : '';
         if (type === 'number') {
@@ -205,18 +228,18 @@
             var vb = getSortValue(b, col, type);
             // For descending numeric sort, put -Infinity items at the bottom
             // (items without data). For 2yr return fallback to 1yr return.
-            if (col === 5 && type === 'number') {
+            if (col === 6 && type === 'number') {
                 if (va === -Infinity && vb === -Infinity) {
-                    // Both missing 2yr — fall back to 1yr (col 4)
-                    va = getSortValue(a, 4, 'number');
-                    vb = getSortValue(b, 4, 'number');
+                    // Both missing 2yr — fall back to 1yr (col 5)
+                    va = getSortValue(a, 5, 'number');
+                    vb = getSortValue(b, 5, 'number');
                 } else if (va === -Infinity) {
                     // Try 1yr for a
-                    var fallback = getSortValue(a, 4, 'number');
+                    var fallback = getSortValue(a, 5, 'number');
                     if (fallback !== -Infinity) va = fallback;
                 } else if (vb === -Infinity) {
                     // Try 1yr for b
-                    var fallback = getSortValue(b, 4, 'number');
+                    var fallback = getSortValue(b, 5, 'number');
                     if (fallback !== -Infinity) vb = fallback;
                 }
             }

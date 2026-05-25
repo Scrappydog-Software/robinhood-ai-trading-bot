@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tickers (
     last_updated_utc    TEXT,
     delisted_utc        TEXT,
     source_feed         TEXT,
+    market_cap          REAL,
     loaded_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_tickers_name   ON tickers(name);
@@ -172,6 +173,7 @@ ALTER TABLE stock_stats ADD COLUMN bt_1yr_return_pct REAL;
 ALTER TABLE stock_stats ADD COLUMN bt_1yr_trades INTEGER;
 ALTER TABLE stock_stats ADD COLUMN bt_1yr_final REAL;
 ALTER TABLE stock_stats ADD COLUMN history_bars INTEGER;
+ALTER TABLE tickers ADD COLUMN market_cap REAL;
 """
 
 
@@ -216,6 +218,7 @@ def upsert_tickers(rows):
         'currency_name', 'currency_symbol', 'base_currency_symbol',
         'base_currency_name', 'cik', 'composite_figi', 'share_class_figi',
         'primary_exchange', 'last_updated_utc', 'delisted_utc', 'source_feed',
+        'market_cap',
     ]
     placeholders = ', '.join(['?'] * len(cols))
     sql = f"INSERT OR REPLACE INTO tickers ({', '.join(cols)}) VALUES ({placeholders})"
@@ -894,7 +897,7 @@ def get_screener_stocks():
         rows = conn.execute(
             "SELECT s.symbol, t.name, s.latest_signal, s.latest_score, "
             "s.bt_1yr_return_pct, s.backtest_return_pct, s.bt_1yr_trades, "
-            "s.backtest_trades, s.history_bars "
+            "s.backtest_trades, s.history_bars, t.market_cap "
             "FROM stock_stats s "
             "LEFT JOIN tickers t ON s.symbol = t.ticker "
             "ORDER BY s.symbol"
