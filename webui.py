@@ -411,20 +411,25 @@ def api_stock_analyze(symbol):
         stock_data = {k: v for k, v in stock_data.items() if v is not None}
 
         prompt = (
-            f"You are a systematic technical analyst. Analyze this stock using the data below.\n\n"
-            f"**Technical Analysis Framework:**\n"
-            f"1. MA Crossover: SMA alignment, Golden/Death Cross, overextension (>30% above SMA200 = caution)\n"
-            f"2. RSI: <30 oversold, >70 overbought, divergence signals\n"
-            f"3. MACD: histogram direction, crossovers, zero-line position\n"
-            f"4. RSI+MACD Combined: both must agree for strong conviction\n"
-            f"5. Bollinger Bands: position within bands, band width\n"
-            f"6. Volume: ratio vs 20-day avg, OBV trend\n"
-            f"7. Synthesis: count aligned signals for conviction\n\n"
+            f"You are a momentum-focused technical analyst. Analyze this stock using the data below.\n\n"
+            f"**Trading Rules (backtested, follow strictly):**\n"
+            f"1. MA Alignment: SMA(10) > SMA(50) > SMA(200) = strong bullish trend. This is the PRIMARY signal.\n"
+            f"2. MACD: Positive histogram + line above signal = bullish momentum confirmation.\n"
+            f"3. Volume: High vol_ratio (>1.5) CONFIRMS breakouts — do NOT penalize high volume moves.\n"
+            f"4. RSI: Only penalize if RSI > 75 (extreme). RSI 60-70 in an uptrend is NORMAL, not a warning.\n"
+            f"5. Bollinger Band breakouts with high volume are BULLISH (confirmed breakout), NOT overbought.\n"
+            f"6. Overextension: Only flag if >30% above SMA(200). If SMA(200) is not available, IGNORE overextension.\n"
+            f"7. Conviction scoring: 5+ aligned bullish signals = strong_buy. 2-4 = buy. Mixed = hold.\n\n"
+            f"**IMPORTANT:** Our backtesting shows that penalizing momentum (Bollinger breakouts, high volume moves,\n"
+            f"stocks above MAs) REDUCES returns. Trend-following outperforms mean-reversion. Do NOT downgrade\n"
+            f"a stock that has strong MA alignment + positive MACD + high volume just because it moved fast.\n"
+            f"The signal_score field shows the Python engine's assessment — respect it unless you see a clear\n"
+            f"technical breakdown (RSI > 75 + negative MACD + declining volume).\n\n"
             f"**Stock Data (all indicators pre-computed):**\n```json\n{json.dumps(stock_data, indent=1)}\n```\n\n"
             f"**Response Format:**\n"
             f'Return exactly one JSON object: {{"symbol": "{symbol}", "decision": "<strong_buy|buy|hold|sell|strong_sell>", '
             f'"quantity": 0, "rationale": "<detailed explanation referencing the specific indicator values above>"}}\n\n'
-            f"Be specific — reference actual numbers from the data. Provide only JSON."
+            f"Be specific — reference actual numbers. Provide only JSON."
         )
 
         ai_response = claude.make_ai_request(prompt)
