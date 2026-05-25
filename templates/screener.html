@@ -51,7 +51,9 @@
                     data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}"
                     data-rec="{{ stock.latest_signal or 'none' }}"
                     data-exchange="{{ stock.primary_exchange or '' }}"
-                    data-mcap="{{ stock.market_cap if stock.market_cap is not none else '' }}">
+                    data-mcap="{{ stock.market_cap if stock.market_cap is not none else '' }}"
+                    data-avgvol="{{ stock.avg_vol if stock.avg_vol is not none else '' }}"
+                    data-bars="{{ stock.history_bars if stock.history_bars is not none else '' }}">
                     <td><strong>{{ stock.symbol }}</strong></td>
                     <td>{{ stock.name or '—' }}</td>
                     <td>
@@ -175,6 +177,8 @@
         var fractionalOnly = fractionalCheckbox.checked;
         var FRACTIONAL_EXCHANGES = ['XNYS', 'XNAS'];
         var FRACTIONAL_MIN_MCAP = 25000000;
+        var FRACTIONAL_MIN_VOLUME = 250000;
+        var FRACTIONAL_MIN_BARS = 400;
 
         rows.forEach(function(row) {
             var rec = row.getAttribute('data-rec') || 'none';
@@ -187,7 +191,14 @@
                 var exchange = row.getAttribute('data-exchange') || '';
                 var mcapRaw = row.getAttribute('data-mcap') || '';
                 var mcap = mcapRaw ? parseFloat(mcapRaw) : 0;
-                matchesFractional = FRACTIONAL_EXCHANGES.indexOf(exchange) !== -1 && mcap > FRACTIONAL_MIN_MCAP;
+                var avgVolRaw = row.getAttribute('data-avgvol') || '';
+                var avgVol = avgVolRaw ? parseFloat(avgVolRaw) : 0;
+                var barsRaw = row.getAttribute('data-bars') || '';
+                var bars = barsRaw ? parseInt(barsRaw) : 0;
+                matchesFractional = FRACTIONAL_EXCHANGES.indexOf(exchange) !== -1
+                    && mcap > FRACTIONAL_MIN_MCAP
+                    && avgVol >= FRACTIONAL_MIN_VOLUME
+                    && bars >= FRACTIONAL_MIN_BARS;
             }
 
             row.style.display = (matchesFilter && matchesSearch && matchesFractional) ? '' : 'none';

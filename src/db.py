@@ -890,19 +890,20 @@ def get_distinct_values(column):
 def get_screener_stocks():
     """Return all stocks from stock_stats joined with tickers for the screener.
 
-    Returns a list of dicts with keys: symbol, name, latest_signal,
-    latest_score, bt_1yr_return_pct, backtest_return_pct, bt_1yr_trades.
-    Stocks in stock_stats without a matching ticker row will still appear
-    (name will be None).
+    Includes average daily volume for filtering. Default filters in the UI
+    require avg_volume >= 250K and history_bars >= 400.
     """
     conn = _connect()
     try:
         rows = conn.execute(
             "SELECT s.symbol, t.name, s.latest_signal, s.latest_score, "
             "s.bt_1yr_return_pct, s.backtest_return_pct, s.bt_1yr_trades, "
-            "s.backtest_trades, s.history_bars, t.market_cap, t.primary_exchange "
+            "s.backtest_trades, s.history_bars, t.market_cap, t.primary_exchange, "
+            "v.avg_vol "
             "FROM stock_stats s "
             "LEFT JOIN tickers t ON s.symbol = t.ticker "
+            "LEFT JOIN (SELECT symbol, CAST(AVG(volume) AS INTEGER) as avg_vol "
+            "  FROM stock_history WHERE volume > 0 GROUP BY symbol) v ON s.symbol = v.symbol "
             "ORDER BY s.symbol"
         ).fetchall()
     finally:

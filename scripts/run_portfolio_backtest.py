@@ -29,6 +29,8 @@ def main():
     parser.add_argument('--name', type=str, default=None, help='Label for this backtest run')
     parser.add_argument('--exchange', type=str, default='XNYS,XNAS', help='Exchanges to include (default: XNYS,XNAS)')
     parser.add_argument('--min-mcap', type=float, default=25000000, help='Minimum market cap (default: 25M)')
+    parser.add_argument('--min-volume', type=float, default=250000, help='Minimum avg daily volume (default: 250K)')
+    parser.add_argument('--min-bars', type=int, default=400, help='Minimum history bars (default: 400)')
     args = parser.parse_args()
 
     init_db()
@@ -42,11 +44,14 @@ def main():
         rows = conn.execute(
             f"SELECT DISTINCT s.symbol FROM stock_stats s "
             f"JOIN tickers t ON s.symbol = t.ticker "
+            f"LEFT JOIN (SELECT symbol, AVG(volume) as avg_vol FROM stock_history "
+            f"  WHERE volume > 0 GROUP BY symbol) v ON s.symbol = v.symbol "
             f"WHERE t.primary_exchange IN ({placeholders}) "
             f"AND (t.market_cap IS NULL OR t.market_cap > ?) "
-            f"AND s.history_bars >= 200 "
+            f"AND s.history_bars >= ? "
+            f"AND (v.avg_vol IS NULL OR v.avg_vol >= ?) "
             f"ORDER BY s.symbol",
-            (*exchanges, args.min_mcap)
+            (*exchanges, args.min_mcap, args.min_bars, args.min_volume)
         ).fetchall()
     finally:
         conn.close()
@@ -59,7 +64,8 @@ def main():
 
     name = args.name or f"portfolio_{len(symbols)}stocks_{args.buy_pct*100:.0f}pct"
 
-    logger.info(f"Universe: {len(symbols)} stocks ({','.join(exchanges)}, mcap>{args.min_mcap/1e6:.0f}M, >=200 bars)")
+    logger.info(f"Universe: {len(symbols)} stocks ({','.join(exchanges)}, mcap>{args.min_mcap/1e6:.0f}M, "
+                f"vol>{args.min_volume/1000:.0f}K, bars>={args.min_bars})")
     logger.info(f"Config: ${args.capital:,.0f} capital, {args.buy_pct*100}% position size, max {args.max_pos} positions")
 
     summary = run_portfolio_backtest(
