@@ -71,7 +71,7 @@
                             {% elif stock.market_cap >= 1000000 %}
                                 ${{ '%.1f'|format(stock.market_cap / 1000000) }}M
                             {% else %}
-                                ${{ '%,.0f'|format(stock.market_cap) }}
+                                ${{ "%.0f"|format(stock.market_cap) }}
                             {% endif %}
                         {% else %}
                             <span class="muted">—</span>
