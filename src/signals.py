@@ -345,6 +345,15 @@ def score_volume(bars, i):
 
     prev_close = bars[i - 1].get('close') if i > 0 else None
 
+    # Price shock: large single-day drop (>7%) = strong sell signal
+    # Large single-day gain (>7%) with volume = strong buy signal
+    if prev_close is not None and close is not None and prev_close > 0:
+        day_change_pct = (close - prev_close) / prev_close
+        if day_change_pct <= -0.07:
+            return -2  # price shock down
+        elif day_change_pct >= 0.07 and vol_ratio > 1.0:
+            return 2  # price shock up with volume
+
     # Climactic reversal: huge volume at a recent low with recovery
     if vol_ratio > 3.0 and i >= 5:
         recent_closes = [bars[j].get('close') for j in range(i - 5, i) if bars[j].get('close') is not None]
