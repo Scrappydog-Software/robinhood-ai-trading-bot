@@ -123,8 +123,33 @@ class Position:
         return self.shares * self.buy_price
 
 
+def _detect_market_regime(spy_bar):
+    """Determine market regime from SPY bar data.
+
+    Returns: 'bull', 'recovery', 'correction', 'bear', or 'unknown'
+    """
+    if not spy_bar:
+        return 'unknown'
+    close = spy_bar.get('close') or 0
+    sma50 = spy_bar.get('sma_50')
+    sma200 = spy_bar.get('sma_200')
+
+    if not close or not sma50 or not sma200:
+        return 'unknown'
+
+    if close > sma50 and sma50 > sma200:
+        return 'bull'
+    elif close < sma50 and sma50 < sma200:
+        return 'bear'
+    elif close < sma50:
+        return 'correction'
+    else:
+        return 'recovery'
+
+
 def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
-                           max_positions=50, name="default"):
+                           max_positions=50, name="default",
+                           regime_aware=True):
     """Run a realistic portfolio-level backtest across multiple stocks.
 
     Args:
@@ -133,6 +158,12 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
         buy_pct: position size as % of portfolio value (0.02 = 2%)
         max_positions: maximum simultaneous positions
         name: label for this backtest run
+        regime_aware: if True, use SPY to adjust buying based on market regime
+
+    Market regime rules (when regime_aware=True):
+        - Bull/Recovery: buy freely on score >= 2
+        - Correction: maintain 25% cash reserve, only buy score >= 5
+        - Bear: maintain 50% cash reserve, only buy score >= 7
 
     Returns:
         dict with summary stats
@@ -157,7 +188,20 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
         conn.close()
 
     logger.info(f"PortfolioBT: starting '{name}' (id={backtest_id}) with ${initial_capital:,.0f}, "
-                f"{buy_pct*100}% position size, max {max_positions} positions")
+                f"{buy_pct*100}% position size, max {max_positions} positions, "
+                f"regime_aware={regime_aware}")
+
+    # Load SPY for market regime detection
+    spy_by_date = {}
+    if regime_aware:
+        spy_bars = get_stock_history_bars('SPY')
+        if spy_bars:
+            spy_bars = compute_signals_for_bars(spy_bars)
+            spy_by_date = {b['bar_date']: b for b in spy_bars}
+            logger.info(f"PortfolioBT: SPY loaded ({len(spy_bars)} bars) for regime detection")
+        else:
+            logger.warning("PortfolioBT: SPY not in DB — regime detection disabled")
+            regime_aware = False
 
     # Load and compute signals for all symbols
     all_bars = {}
@@ -287,25 +331,49 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                         'cash_after': round(cash, 2),
                     })
 
-        # --- BUY LOGIC ---
-        # Standard position size = buy_pct of portfolio value
-        position_size = portfolio_value * buy_pct
+        # --- BUY LOGIC (regime-aware) ---
+        # Determine market regime and adjust buying behavior
+        regime = 'unknown'
+        min_score = 2  # default: buy on score >= 2
+        min_cash_reserve = 0.0  # no reserve by default
 
-        if cash >= position_size and len(positions) < max_positions:
-            # Collect all buy signals for today, ranked by score
+        if regime_aware:
+            spy_bar = spy_by_date.get(date)
+            regime = _detect_market_regime(spy_bar)
+
+            if regime == 'bull' or regime == 'recovery':
+                min_score = 2
+                min_cash_reserve = 0.05  # keep 5% cash
+            elif regime == 'correction':
+                min_score = 5
+                min_cash_reserve = 0.25  # keep 25% cash
+            elif regime == 'bear':
+                min_score = 7
+                min_cash_reserve = 0.50  # keep 50% cash
+
+        position_size = portfolio_value * buy_pct
+        available_cash = cash - (portfolio_value * min_cash_reserve)
+
+        if available_cash >= position_size and len(positions) < max_positions:
+            # Collect buy signals that meet the regime-adjusted minimum score
             buy_candidates = []
             for sym in all_bars:
                 if sym in positions:
                     continue
                 bar = bars_by_date.get((sym, date))
-                if bar and (bar.get('signal_synthesis') or '').lower() in ('buy', 'strong_buy'):
-                    buy_candidates.append((bar.get('signal_score', 0), sym, bar))
+                if not bar:
+                    continue
+                rec = (bar.get('signal_synthesis') or '').lower()
+                score = bar.get('signal_score', 0)
+                if rec in ('buy', 'strong_buy') and score >= min_score:
+                    buy_candidates.append((score, sym, bar))
 
             # Sort by score descending (strongest signals first)
             buy_candidates.sort(reverse=True, key=lambda x: x[0])
 
             for score, sym, bar in buy_candidates:
-                if cash < position_size or len(positions) >= max_positions:
+                available_cash = cash - (portfolio_value * min_cash_reserve)
+                if available_cash < position_size or len(positions) >= max_positions:
                     break
                 buy_price = bar.get('close') or 0
                 if buy_price <= 0:
