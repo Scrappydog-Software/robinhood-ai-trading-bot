@@ -670,6 +670,34 @@ def stock_history_page(symbol):
     )
 
 
+# ---- Documentation pages ----
+
+_DOCS = {
+    'overview': {'file': 'docs/project-overview.md', 'title': 'Project Overview'},
+    'schema': {'file': 'docs/database-schema.md', 'title': 'Database Schema'},
+    'algorithms': {'file': 'docs/algorithms.md', 'title': 'Algorithms'},
+    'framework': {'file': 'docs/technical-analysis-framework.md', 'title': 'Technical Analysis Framework'},
+}
+
+
+@app.route('/docs')
+def docs_index():
+    return render_template('docs.html', docs=_DOCS, slug=None, title=None, content=None)
+
+
+@app.route('/docs/<slug>')
+def docs_page(slug):
+    doc = _DOCS.get(slug)
+    if not doc:
+        return redirect(url_for('docs_index'))
+    try:
+        with open(doc['file'], 'r') as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = f"*File `{doc['file']}` not found.*"
+    return render_template('docs.html', docs=_DOCS, slug=slug, title=doc['title'], content=content)
+
+
 RESEARCH_PAGE_SIZE = 50
 
 

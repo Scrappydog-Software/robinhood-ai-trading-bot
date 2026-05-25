@@ -385,3 +385,24 @@ th.sortable {
 th.sortable:hover { color: var(--accent); }
 th.sort-active { color: var(--accent); }
 .sort-arrow { font-size: 10px; }
+
+/* Documentation pages */
+.doc-link {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px; background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: 6px; text-decoration: none; color: var(--text);
+    transition: border-color 0.15s;
+}
+.doc-link:hover { border-color: var(--accent); }
+.doc-rendered { line-height: 1.7; }
+.doc-rendered h1 { font-size: 1.6em; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-top: 0; }
+.doc-rendered h2 { font-size: 1.3em; color: var(--text); margin-top: 28px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.doc-rendered h3 { font-size: 1.1em; color: var(--muted); margin-top: 20px; }
+.doc-rendered code { background: var(--bg); padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+.doc-rendered pre { background: var(--bg); padding: 14px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); }
+.doc-rendered pre code { background: none; padding: 0; }
+.doc-rendered table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.doc-rendered th, .doc-rendered td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; font-size: 13px; }
+.doc-rendered th { background: var(--bg); }
+.doc-rendered blockquote { border-left: 3px solid var(--accent); margin: 12px 0; padding: 8px 16px; color: var(--muted); }
+.doc-rendered a { color: var(--accent); }
