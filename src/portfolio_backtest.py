@@ -149,7 +149,7 @@ def _detect_market_regime(spy_bar):
 
 def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                            max_positions=50, name="default",
-                           regime_aware=True):
+                           regime_aware=True, start_date=None):
     """Run a realistic portfolio-level backtest across multiple stocks.
 
     Args:
@@ -227,6 +227,11 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
         for bar in bars:
             key = (sym, bar['bar_date'])
             bars_by_date[key] = bar
+
+    # Filter dates if start_date specified
+    if start_date:
+        all_dates = [d for d in all_dates if d >= start_date]
+        logger.info(f"PortfolioBT: starting from {start_date} ({len(all_dates)} trading days)")
 
     # Simulation state
     cash = initial_capital
