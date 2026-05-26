@@ -265,29 +265,36 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
         })
 
         # --- SELL LOGIC ---
-        # Check each position for sell signals
-        for sym in list(positions.keys()):
-            bar = bars_by_date.get((sym, date))
-            if not bar:
-                continue
-            rec = (bar.get('signal_synthesis') or '').lower()
-            if rec in ('sell', 'strong_sell'):
-                pos = positions.pop(sym)
-                sell_price = bar.get('open') or bar.get('close') or pos.current_price
-                proceeds = pos.shares * sell_price
-                pnl = proceeds - pos.cost_basis
-                pnl_pct = (sell_price - pos.buy_price) / pos.buy_price * 100
-                cash += proceeds
-                bars_held = len([d for d in all_dates if pos.buy_date <= d <= date])
-                trades.append({
-                    'symbol': sym, 'action': 'sell', 'date': date,
-                    'price': sell_price, 'shares': pos.shares,
-                    'value': proceeds, 'reason': f'signal_{rec}',
-                    'pnl': round(pnl, 2), 'pnl_pct': round(pnl_pct, 1),
-                    'bars_held': bars_held,
-                    'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
-                    'cash_after': round(cash, 2),
-                })
+        # Signals are computed after market close. Execute at NEXT day's open.
+        # We check YESTERDAY's signal and execute today at open.
+        prev_date_idx = all_dates.index(date) - 1 if all_dates.index(date) > 0 else -1
+        prev_date = all_dates[prev_date_idx] if prev_date_idx >= 0 else None
+
+        if prev_date:
+            for sym in list(positions.keys()):
+                prev_bar = bars_by_date.get((sym, prev_date))
+                today_bar = bars_by_date.get((sym, date))
+                if not prev_bar:
+                    continue
+                rec = (prev_bar.get('signal_synthesis') or '').lower()
+                if rec in ('sell', 'strong_sell'):
+                    pos = positions.pop(sym)
+                    # Execute at today's open (next available price after signal)
+                    sell_price = (today_bar.get('open') if today_bar else None) or pos.current_price
+                    proceeds = pos.shares * sell_price
+                    pnl = proceeds - pos.cost_basis
+                    pnl_pct = (sell_price - pos.buy_price) / pos.buy_price * 100
+                    cash += proceeds
+                    bars_held = len([d for d in all_dates if pos.buy_date <= d <= date])
+                    trades.append({
+                        'symbol': sym, 'action': 'sell', 'date': date,
+                        'price': sell_price, 'shares': pos.shares,
+                        'value': proceeds, 'reason': f'signal_{rec}',
+                        'pnl': round(pnl, 2), 'pnl_pct': round(pnl_pct, 1),
+                        'bars_held': bars_held,
+                        'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
+                        'cash_after': round(cash, 2),
+                    })
 
         # --- REBALANCE: Exit weakest if fully invested and strong buy available ---
         if len(positions) >= max_positions:
@@ -337,63 +344,67 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                     })
 
         # --- BUY LOGIC (regime-aware) ---
-        # Determine market regime and adjust buying behavior
-        regime = 'unknown'
-        min_score = 2  # default: buy on score >= 2
-        min_cash_reserve = 0.0  # no reserve by default
+        # Signals computed after yesterday's close. Execute buys at today's open.
+        # Check YESTERDAY's signals and buy at today's open.
+        if prev_date:
+            regime = 'unknown'
+            min_score = 2
+            min_cash_reserve = 0.0
 
-        if regime_aware:
-            spy_bar = spy_by_date.get(date)
-            regime = _detect_market_regime(spy_bar)
+            if regime_aware:
+                spy_bar = spy_by_date.get(prev_date)
+                regime = _detect_market_regime(spy_bar)
 
-            if regime == 'bull' or regime == 'recovery':
-                min_score = 2
-                min_cash_reserve = 0.05  # keep 5% cash
-            elif regime == 'correction':
-                min_score = 5
-                min_cash_reserve = 0.25  # keep 25% cash
-            elif regime == 'bear':
-                min_score = 7
-                min_cash_reserve = 0.50  # keep 50% cash
+                if regime == 'bull' or regime == 'recovery':
+                    min_score = 2
+                    min_cash_reserve = 0.05
+                elif regime == 'correction':
+                    min_score = 5
+                    min_cash_reserve = 0.25
+                elif regime == 'bear':
+                    min_score = 7
+                    min_cash_reserve = 0.50
 
-        position_size = portfolio_value * buy_pct
-        available_cash = cash - (portfolio_value * min_cash_reserve)
+            position_size = portfolio_value * buy_pct
+            available_cash = cash - (portfolio_value * min_cash_reserve)
 
-        if available_cash >= position_size and len(positions) < max_positions:
-            # Collect buy signals that meet the regime-adjusted minimum score
-            buy_candidates = []
-            for sym in all_bars:
-                if sym in positions:
-                    continue
-                bar = bars_by_date.get((sym, date))
-                if not bar:
-                    continue
-                rec = (bar.get('signal_synthesis') or '').lower()
-                score = bar.get('signal_score', 0)
-                if rec in ('buy', 'strong_buy') and score >= min_score:
-                    buy_candidates.append((score, sym, bar))
+            if available_cash >= position_size and len(positions) < max_positions:
+                # Collect buy signals from YESTERDAY
+                buy_candidates = []
+                for sym in all_bars:
+                    if sym in positions:
+                        continue
+                    prev_bar = bars_by_date.get((sym, prev_date))
+                    if not prev_bar:
+                        continue
+                    rec = (prev_bar.get('signal_synthesis') or '').lower()
+                    score = prev_bar.get('signal_score', 0)
+                    if rec in ('buy', 'strong_buy') and score >= min_score:
+                        # Get today's open for execution price
+                        today_bar = bars_by_date.get((sym, date))
+                        if today_bar and today_bar.get('open'):
+                            buy_candidates.append((score, sym, today_bar))
 
-            # Sort by score descending (strongest signals first)
-            buy_candidates.sort(reverse=True, key=lambda x: x[0])
+                buy_candidates.sort(reverse=True, key=lambda x: x[0])
 
-            for score, sym, bar in buy_candidates:
-                available_cash = cash - (portfolio_value * min_cash_reserve)
-                if available_cash < position_size or len(positions) >= max_positions:
-                    break
-                buy_price = bar.get('close') or 0
-                if buy_price <= 0:
-                    continue
-                shares = position_size / buy_price
-                positions[sym] = Position(sym, buy_price, shares, date, 0)
-                cash -= position_size
-                trades.append({
-                    'symbol': sym, 'action': 'buy', 'date': date,
-                    'price': buy_price, 'shares': round(shares, 6),
-                    'value': round(position_size, 2), 'reason': f'signal_score_{score}',
-                    'pnl': None, 'pnl_pct': None, 'bars_held': None,
-                    'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
-                    'cash_after': round(cash, 2),
-                })
+                for score, sym, today_bar in buy_candidates:
+                    available_cash = cash - (portfolio_value * min_cash_reserve)
+                    if available_cash < position_size or len(positions) >= max_positions:
+                        break
+                    buy_price = today_bar.get('open') or 0
+                    if buy_price <= 0:
+                        continue
+                    shares = position_size / buy_price
+                    positions[sym] = Position(sym, buy_price, shares, date, 0)
+                    cash -= position_size
+                    trades.append({
+                        'symbol': sym, 'action': 'buy', 'date': date,
+                        'price': buy_price, 'shares': round(shares, 6),
+                        'value': round(position_size, 2), 'reason': f'signal_score_{score}',
+                        'pnl': None, 'pnl_pct': None, 'bars_held': None,
+                        'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
+                        'cash_after': round(cash, 2),
+                    })
 
     # --- Final summary ---
     final_value = cash + sum(p.value for p in positions.values())
