@@ -52,6 +52,16 @@
         <dt>2-Year Return</dt>
         <dd class="muted">Insufficient history (need 2 years)</dd>
         {% endif %}
+
+        {% if stats.signal_win_rate is not none %}
+        <dt>Signal Win Rate</dt>
+        <dd class="{{ 'rec-buy' if stats.buy_eligible else 'rec-sell' }}" style="font-weight: 700;">
+            {{ '%.0f'|format(stats.signal_win_rate) }}% ({{ stats.signal_total_trades }} trades)
+            {% if not stats.buy_eligible %}
+            <span class="rec rec-sell" style="margin-left:8px;">filtered</span>
+            {% endif %}
+        </dd>
+        {% endif %}
     </dl>
     {% else %}
     <p class="muted">No backtest data. Load history and compute signals first.</p>

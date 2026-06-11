@@ -174,6 +174,9 @@ ALTER TABLE stock_stats ADD COLUMN bt_1yr_trades INTEGER;
 ALTER TABLE stock_stats ADD COLUMN bt_1yr_final REAL;
 ALTER TABLE stock_stats ADD COLUMN history_bars INTEGER;
 ALTER TABLE tickers ADD COLUMN market_cap REAL;
+ALTER TABLE stock_stats ADD COLUMN signal_win_rate REAL;
+ALTER TABLE stock_stats ADD COLUMN signal_total_trades INTEGER;
+ALTER TABLE stock_stats ADD COLUMN buy_eligible INTEGER NOT NULL DEFAULT 1;
 """
 
 
@@ -777,12 +780,56 @@ def _run_backtest(rows):
     return return_pct, trades, round(final, 2)
 
 
+def _compute_signal_win_rate(rows, lookback_bars=252):
+    """Compute signal-based trade win rate for the trailing lookback period.
+
+    Simulates entry on buy/strong_buy signals and exit on sell/strong_sell,
+    then counts winning vs losing trades. Uses next-day open execution
+    (matching the production model).
+
+    Returns (win_rate_pct, total_completed_trades) or (None, 0) if fewer
+    than 3 completed trades exist.
+    """
+    recent_rows = rows[-lookback_bars:] if len(rows) > lookback_bars else rows
+
+    state = 'waiting'
+    buy_price = 0
+    trades_won = 0
+    trades_lost = 0
+
+    for i, row in enumerate(recent_rows):
+        sig = (row.get('signal_synthesis') or '').lower()
+        if state == 'waiting' and sig in ('buy', 'strong_buy'):
+            # Execute at next bar's open
+            if i + 1 < len(recent_rows):
+                next_open = recent_rows[i + 1].get('open')
+                if next_open and next_open > 0:
+                    buy_price = next_open
+                    state = 'holding'
+        elif state == 'holding' and sig in ('sell', 'strong_sell'):
+            if i + 1 < len(recent_rows):
+                sell_price = recent_rows[i + 1].get('open')
+                if sell_price and sell_price > 0:
+                    if sell_price > buy_price:
+                        trades_won += 1
+                    else:
+                        trades_lost += 1
+                    state = 'waiting'
+
+    total = trades_won + trades_lost
+    if total < 3:
+        return None, total
+
+    win_rate = round(trades_won / total * 100, 1)
+    return win_rate, total
+
+
 def compute_backtest_stats(symbol):
     """Run backtest simulations and store 1-year and 2-year results.
 
     Always computes a 1-year return (last 252 bars) and a full-history
     return (all available bars, labeled as 2-year if >= 400 bars).
-    Stores both in stock_stats so the UI can show accurate labels.
+    Also computes signal win rate for buy eligibility filtering.
 
     Called automatically after compute_signals.
     """
@@ -815,6 +862,14 @@ def compute_backtest_stats(symbol):
     bt_2yr_trades = full_trades if has_2yr else None
     bt_2yr_final = full_final if has_2yr else None
 
+    # Signal win rate (trailing 1 year)
+    win_rate, win_rate_trades = _compute_signal_win_rate(rows, lookback_bars=252)
+
+    # Buy eligibility: win rate must be >35% (or not enough data to judge = eligible)
+    buy_eligible = 1
+    if win_rate is not None and win_rate <= 35.0:
+        buy_eligible = 0
+
     # Latest signal
     latest_signal = None
     latest_score = None
@@ -833,18 +888,22 @@ def compute_backtest_stats(symbol):
                 "INSERT OR REPLACE INTO stock_stats "
                 "(symbol, backtest_return_pct, backtest_trades, backtest_final, "
                 "bt_1yr_return_pct, bt_1yr_trades, bt_1yr_final, "
-                "latest_signal, latest_score, history_bars, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+                "latest_signal, latest_score, history_bars, "
+                "signal_win_rate, signal_total_trades, buy_eligible, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
                 (symbol, bt_2yr_pct, bt_2yr_trades, bt_2yr_final,
                  yr1_pct, yr1_trades, yr1_final,
-                 latest_signal, latest_score, len(rows))
+                 latest_signal, latest_score, len(rows),
+                 win_rate, win_rate_trades, buy_eligible)
             )
             conn.commit()
     finally:
         conn.close()
 
     label_2yr = f" | 2yr: {bt_2yr_pct}%" if has_2yr else ""
-    logger.info(f"DB: backtest stats for {symbol}: 1yr: {yr1_pct}% ({yr1_trades} trades){label_2yr}")
+    elig_str = "eligible" if buy_eligible else "FILTERED"
+    logger.info(f"DB: backtest stats for {symbol}: 1yr: {yr1_pct}% ({yr1_trades} trades){label_2yr} | "
+                f"win_rate: {win_rate}% ({win_rate_trades} trades) [{elig_str}]")
     return yr1_pct
 
 
@@ -869,6 +928,34 @@ def get_all_stock_stats():
     finally:
         conn.close()
     return {row['symbol']: dict(row) for row in rows}
+
+
+def is_buy_eligible(symbol):
+    """Check if a stock passes the signal win rate filter for buying.
+
+    Returns True if:
+    - Stock has fewer than 3 completed signal trades (not enough data)
+    - Stock's trailing 1-year signal win rate is above 35%
+
+    Returns False if:
+    - Stock has 3+ trades AND win rate <= 35%
+    """
+    stats = get_stock_stats(symbol)
+    if not stats:
+        return True
+    return bool(stats.get('buy_eligible', 1))
+
+
+def get_ineligible_symbols():
+    """Return set of symbols that are currently filtered out by win rate."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT symbol FROM stock_stats WHERE buy_eligible = 0"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r['symbol'] for r in rows}
 
 
 def get_distinct_values(column):
@@ -899,6 +986,7 @@ def get_screener_stocks():
             "SELECT s.symbol, t.name, s.latest_signal, s.latest_score, "
             "s.bt_1yr_return_pct, s.backtest_return_pct, s.bt_1yr_trades, "
             "s.backtest_trades, s.history_bars, t.market_cap, t.primary_exchange, "
+            "s.signal_win_rate, s.signal_total_trades, s.buy_eligible, "
             "v.avg_vol "
             "FROM stock_stats s "
             "LEFT JOIN tickers t ON s.symbol = t.ticker "

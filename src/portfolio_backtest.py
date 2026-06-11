@@ -149,7 +149,8 @@ def _detect_market_regime(spy_bar):
 
 def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                            max_positions=50, name="default",
-                           regime_aware=True, start_date=None):
+                           regime_aware=True, start_date=None,
+                           use_win_rate_filter=True):
     """Run a realistic portfolio-level backtest across multiple stocks.
 
     Args:
@@ -159,11 +160,17 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
         max_positions: maximum simultaneous positions
         name: label for this backtest run
         regime_aware: if True, use SPY to adjust buying based on market regime
+        use_win_rate_filter: if True, exclude stocks with signal win rate <= 35%
 
     Market regime rules (when regime_aware=True):
         - Bull/Recovery: buy freely on score >= 2
         - Correction: maintain 25% cash reserve, only buy score >= 5
         - Bear: maintain 50% cash reserve, only buy score >= 7
+
+    Signal win rate filter (when use_win_rate_filter=True):
+        - Tracks completed trades per stock during the backtest
+        - After 3+ completed trades, requires >35% win rate to buy again
+        - Dynamically updated as new trades complete
 
     Returns:
         dict with summary stats
@@ -239,6 +246,8 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
     trades = []
     daily_values = []
     peak_value = initial_capital
+    # Signal win rate tracking per symbol (for dynamic filtering)
+    signal_trade_history = {}  # symbol -> list of pnl_pct values
 
     for date in all_dates:
         # Update current prices for all held positions
@@ -295,6 +304,10 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                         'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
                         'cash_after': round(cash, 2),
                     })
+                    # Track trade outcome for win rate filter
+                    if sym not in signal_trade_history:
+                        signal_trade_history[sym] = []
+                    signal_trade_history[sym].append(pnl_pct)
 
         # --- REBALANCE: Exit weakest if fully invested and strong buy available ---
         if len(positions) >= max_positions:
@@ -342,6 +355,10 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                         'portfolio_value': round(cash + sum(p.value for p in positions.values()), 2),
                         'cash_after': round(cash, 2),
                     })
+                    # Track for win rate filter
+                    if weakest not in signal_trade_history:
+                        signal_trade_history[weakest] = []
+                    signal_trade_history[weakest].append(pnl_pct)
 
         # --- BUY LOGIC (regime-aware) ---
         # Signals computed after yesterday's close. Execute buys at today's open.
@@ -374,6 +391,13 @@ def run_portfolio_backtest(symbols, initial_capital=100000, buy_pct=0.02,
                 for sym in all_bars:
                     if sym in positions:
                         continue
+                    # Win rate filter: skip stocks with poor signal track record
+                    if use_win_rate_filter and sym in signal_trade_history:
+                        history = signal_trade_history[sym]
+                        if len(history) >= 3:
+                            wins = sum(1 for pnl in history if pnl > 0)
+                            if (wins / len(history)) <= 0.35:
+                                continue
                     prev_bar = bars_by_date.get((sym, prev_date))
                     if not prev_bar:
                         continue

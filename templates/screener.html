@@ -40,9 +40,10 @@
                     <th class="sortable" data-col="2" data-type="string">Recommendation <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="3" data-type="number">Score <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="4" data-type="number">Market Cap <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="5" data-type="number">1yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="6" data-type="number">2yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="7" data-type="number">Trades <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="5" data-type="number">Win Rate <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="6" data-type="number">1yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="7" data-type="number">2yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="8" data-type="number">Trades <span class="sort-arrow"></span></th>
                 </tr>
             </thead>
             <tbody>
@@ -75,6 +76,16 @@
                             {% else %}
                                 ${{ "%.0f"|format(stock.market_cap) }}
                             {% endif %}
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if stock.signal_win_rate is not none %}
+                            <span class="{{ 'rec-buy' if stock.buy_eligible else 'rec-sell' }}" style="font-weight:600;">
+                                {{ '%.0f'|format(stock.signal_win_rate) }}%
+                            </span>
+                            <span class="muted small">({{ stock.signal_total_trades or 0 }})</span>
                         {% else %}
                             <span class="muted">—</span>
                         {% endif %}
@@ -116,7 +127,7 @@
     var STORAGE_KEY = 'screener_state';
     var DEFAULT_STATE = {
         filters: ['strong_buy'],
-        sort: { col: 6, asc: false },
+        sort: { col: 7, asc: false },
         search: ''
     };
 
