@@ -129,6 +129,11 @@ def filter_ai_hallucinations(account_info, portfolio_overview, watchlist_overvie
             logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")
             continue
 
+        # Filter buy/strong_buy for stocks that fail the signal win rate filter
+        if decision_type in ("buy", "strong_buy") and not db.is_buy_eligible(symbol):
+            logger.info(f"Filtering out {decision_type} decision for {symbol} — signal win rate too low")
+            continue
+
         # Filter sell/strong_sell decisions with is_sell_pdt_restricted == True
         if decision_type in ("sell", "strong_sell") and stock_data.get("is_sell_pdt_restricted", False):
             logger.debug(f"Filtering out {decision_type} decision for {symbol} due to PDT restriction")

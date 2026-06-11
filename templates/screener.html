@@ -40,9 +40,10 @@
                     <th class="sortable" data-col="2" data-type="string">Recommendation <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="3" data-type="number">Score <span class="sort-arrow"></span></th>
                     <th class="sortable" data-col="4" data-type="number">Market Cap <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="5" data-type="number">1yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="6" data-type="number">2yr Return <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-col="7" data-type="number">Trades <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="5" data-type="number">Win Rate <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="6" data-type="number">1yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="7" data-type="number">2yr Return <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-col="8" data-type="number">Trades <span class="sort-arrow"></span></th>
                 </tr>
             </thead>
             <tbody>
@@ -51,7 +52,9 @@
                     data-search="{{ stock.symbol|lower }} {{ (stock.name or '')|lower }}"
                     data-rec="{{ stock.latest_signal or 'none' }}"
                     data-exchange="{{ stock.primary_exchange or '' }}"
-                    data-mcap="{{ stock.market_cap if stock.market_cap is not none else '' }}">
+                    data-mcap="{{ stock.market_cap if stock.market_cap is not none else '' }}"
+                    data-avgvol="{{ stock.avg_vol if stock.avg_vol is not none else '' }}"
+                    data-bars="{{ stock.history_bars if stock.history_bars is not none else '' }}">
                     <td><strong>{{ stock.symbol }}</strong></td>
                     <td>{{ stock.name or '—' }}</td>
                     <td>
@@ -73,6 +76,16 @@
                             {% else %}
                                 ${{ "%.0f"|format(stock.market_cap) }}
                             {% endif %}
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if stock.signal_win_rate is not none %}
+                            <span class="{{ 'rec-buy' if stock.buy_eligible else 'rec-sell' }}" style="font-weight:600;">
+                                {{ '%.0f'|format(stock.signal_win_rate) }}%
+                            </span>
+                            <span class="muted small">({{ stock.signal_total_trades or 0 }})</span>
                         {% else %}
                             <span class="muted">—</span>
                         {% endif %}
@@ -114,7 +127,7 @@
     var STORAGE_KEY = 'screener_state';
     var DEFAULT_STATE = {
         filters: ['strong_buy'],
-        sort: { col: 6, asc: false },
+        sort: { col: 7, asc: false },
         search: ''
     };
 
@@ -175,6 +188,8 @@
         var fractionalOnly = fractionalCheckbox.checked;
         var FRACTIONAL_EXCHANGES = ['XNYS', 'XNAS'];
         var FRACTIONAL_MIN_MCAP = 25000000;
+        var FRACTIONAL_MIN_VOLUME = 250000;
+        var FRACTIONAL_MIN_BARS = 400;
 
         rows.forEach(function(row) {
             var rec = row.getAttribute('data-rec') || 'none';
@@ -187,7 +202,14 @@
                 var exchange = row.getAttribute('data-exchange') || '';
                 var mcapRaw = row.getAttribute('data-mcap') || '';
                 var mcap = mcapRaw ? parseFloat(mcapRaw) : 0;
-                matchesFractional = FRACTIONAL_EXCHANGES.indexOf(exchange) !== -1 && mcap > FRACTIONAL_MIN_MCAP;
+                var avgVolRaw = row.getAttribute('data-avgvol') || '';
+                var avgVol = avgVolRaw ? parseFloat(avgVolRaw) : 0;
+                var barsRaw = row.getAttribute('data-bars') || '';
+                var bars = barsRaw ? parseInt(barsRaw) : 0;
+                matchesFractional = FRACTIONAL_EXCHANGES.indexOf(exchange) !== -1
+                    && mcap > FRACTIONAL_MIN_MCAP
+                    && avgVol >= FRACTIONAL_MIN_VOLUME
+                    && bars >= FRACTIONAL_MIN_BARS;
             }
 
             row.style.display = (matchesFilter && matchesSearch && matchesFractional) ? '' : 'none';
